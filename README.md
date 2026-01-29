@@ -19,7 +19,7 @@ Ragnificent is a powerful tool designed to simplify the creation and management 
 
 ### Prerequisites
 
-- Python 3.8 or higher (recommended)
+- Python 3.9 or higher (recommended)
 - pip or your preferred package manager
 
 ### Installation
@@ -37,8 +37,9 @@ pip install -r requirements.txt
 
 ### Basic Example
 
+> **Note**: The following is a planned API design. This functionality will be implemented as the project develops.
+
 ```python
-# Example usage will be added as the project develops
 from ragnificent import RAGDatabase
 
 # Initialize a RAG database
@@ -49,7 +50,7 @@ rag_db = RAGDatabase(
 
 # Add documents
 rag_db.add_documents([
-    {"text": "Your document content here", "metadata": {...}}
+    {"text": "Your document content here", "metadata": {"source": "example.txt", "author": "John Doe"}}
 ])
 
 # Search with agentic capabilities
