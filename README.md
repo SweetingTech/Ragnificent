@@ -53,8 +53,14 @@ graph TD
 
 Run the setup script to create folders and install dependencies:
 
+**Windows (PowerShell):**
 ```powershell
 ./scripts/windows/setup.ps1
+```
+
+**Linux/macOS:**
+```bash
+./scripts/linux/setup.sh
 ```
 
 ### 2. Configure
@@ -72,14 +78,26 @@ docker-compose up -d qdrant
 
 ### 4. Initialize Database
 
+**Windows (PowerShell):**
 ```powershell
 ./scripts/windows/init_state_db.ps1
 ```
 
+**Linux/macOS:**
+```bash
+./scripts/linux/init_state_db.sh
+```
+
 ### 5. Run the Service
 
+**Windows (PowerShell):**
 ```powershell
 ./scripts/windows/run.ps1
+```
+
+**Linux/macOS:**
+```bash
+./scripts/linux/run.sh
 ```
 
 The API will be available at `http://localhost:8008`.
@@ -88,7 +106,8 @@ The API will be available at `http://localhost:8008`.
 
 - `app/`: Source code
 - `rag_library/`: Default location for your documents (inbox) and database.
-- `scripts/`: Helper scripts for Windows and Docker.
+- `scripts/windows/`: Helper scripts for Windows (PowerShell)
+- `scripts/linux/`: Helper scripts for Linux/macOS (Bash)
 
 ## Usage
 
@@ -128,5 +147,3 @@ python -m app.cli serve
 # Run ingestion for a corpus
 python -m app.cli ingest --corpus <corpus_id>
 ```
-
-transcripts
