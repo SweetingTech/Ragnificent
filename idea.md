@@ -196,6 +196,39 @@ This checklist tracks the end-to-end development of Ragnificent.
 
 ---
 
+## Phase 9.5: Code Review & Quality Hardening (Completed)
+
+A comprehensive code review identified and addressed 33 issues across security, architecture, and code quality.
+
+### Security Fixes
+- [x] Path traversal vulnerability - corpus IDs validated with regex + `relative_to()` path checks
+- [x] Global environment mutation - removed `os.environ["OLLAMA_HOST"]`, use explicit `Client(host=...)`
+- [x] YAML injection - user inputs sanitized, using `yaml.safe_dump()` instead of `yaml.dump()`
+
+### Architecture Improvements
+- [x] Thread-safe SQLite - implemented thread-local storage pattern with WAL mode
+- [x] Dependency injection - replaced module-level globals with FastAPI `Depends()` pattern
+- [x] Async non-blocking - blocking I/O wrapped with `asyncio.to_thread()`
+- [x] Centralized corpus service - `CorpusService` eliminates duplicate code
+
+### Resource Management
+- [x] Database lifecycle - generators with `finally` cleanup ensure connections close
+- [x] PDF file handles - `try/finally` with explicit `doc.close()` prevents leaks
+- [x] Collection caching - O(1) existence checks via `get_collection()` instead of O(n) list scan
+
+### Code Quality
+- [x] Removed unused imports across multiple files
+- [x] Added logging to silent `except` blocks
+- [x] Fixed Jinja template falsy checks (`chunk_index=0` issue)
+- [x] Config caching - avoid repeated `load_config()` calls
+- [x] Proper type hints and docstrings
+
+### Verification
+- [x] All syntax checks pass (`py_compile`)
+- [x] Documented in `20260129_Changelog.md`
+
+---
+
 ## Phase 10: Dockerization + Multi-instance (Pending)
 ### Tasks
 - [ ] Create `Dockerfile` for the FastAPI service.
@@ -213,11 +246,19 @@ This checklist tracks the end-to-end development of Ragnificent.
 - [ ] Data persists across container restarts.
 - [ ] Multiple instances run on different ports without collision.
 
-## Phase 11: Security & Hardening (Pending)
-### Tasks
+## Phase 11: Security & Hardening (Partial - In Progress)
+### Completed (via Phase 9.5 Code Review)
+- [x] Input validation - corpus IDs validated against strict patterns
+- [x] Path traversal protection - resolved paths verified within allowed directories
+- [x] Safe serialization - using `yaml.safe_dump()` for YAML output
+- [x] Environment isolation - no global `os.environ` mutations
+
+### Remaining Tasks
 - [ ] Implement API Key middleware in `app/api/dependencies.py`.
 - [ ] Add `.env` support for `ADMIN_API_KEY`.
 - [ ] Secure the GUI (Basic Auth or Token-based).
+- [ ] Add rate limiting for API endpoints.
+- [ ] Implement request logging/audit trail.
 
 ## Phase 12: Advanced OCR (Layout Analysis)
 - [ ] Prototype `layoutlm` or `surya` for table extraction.
