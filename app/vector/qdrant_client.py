@@ -13,11 +13,6 @@ logger = setup_logging()
 DEFAULT_VECTOR_SIZE = 768
 
 
-class CollectionNotFoundError(Exception):
-    """Raised when a collection does not exist."""
-    pass
-
-
 class VectorService:
     """Service for managing vector storage in Qdrant."""
 
@@ -49,6 +44,8 @@ class VectorService:
         """
         Check if a collection exists for the given corpus.
 
+        Uses direct lookup instead of listing all collections for O(1) performance.
+
         Args:
             corpus_id: The corpus identifier
 
@@ -62,13 +59,22 @@ class VectorService:
             return self._collection_cache[collection_name]
 
         try:
-            collections = self.client.get_collections().collections
-            exists = any(c.name == collection_name for c in collections)
-            self._collection_cache[collection_name] = exists
-            return exists
+            # Use direct lookup instead of listing all collections (O(1) vs O(n))
+            self.client.get_collection(collection_name=collection_name)
+            exists = True
+        except UnexpectedResponse as e:
+            # Treat 404/not-found as "collection does not exist"
+            if hasattr(e, 'status_code') and e.status_code == 404:
+                exists = False
+            else:
+                logger.error(f"Failed to check collection existence for {collection_name}: {e}")
+                return False
         except Exception as e:
             logger.error(f"Failed to check collection existence for {collection_name}: {e}")
             return False
+
+        self._collection_cache[collection_name] = exists
+        return exists
 
     def ensure_collection(self, corpus_id: str, vector_size: int = DEFAULT_VECTOR_SIZE) -> None:
         """

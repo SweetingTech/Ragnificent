@@ -237,3 +237,72 @@ The following workflows should be verified:
 ## Dependencies
 
 No new dependencies added. All fixes use existing packages.
+
+---
+
+## PR Review Fixes (Round 2)
+
+The following additional fixes were made in response to GitHub Copilot and Gemini Code Assist review feedback:
+
+### `app/state/stats.py`
+- **Changed**: `StatsService` now takes a `Database` instance instead of `db_path` string
+- **Reason**: The previous implementation bypassed the thread-safe `Database` class by creating its own `sqlite3.connect()` calls
+- **Impact**: Now uses the centralized `Database` class with proper thread-local connection handling
+
+### `app/api/query_engine.py`
+- **Fixed**: Cached `config` in `__init__` to avoid repeated `load_config()` calls
+- **Added**: Logging for `CorpusValidationError` exceptions (was silent)
+- **Removed**: Unused `List` import from typing
+
+### `app/vector/qdrant_client.py`
+- **Changed**: `collection_exists()` now uses direct `get_collection()` lookup instead of O(n) list scan
+- **Removed**: Unused `CollectionNotFoundError` exception class
+- **Reason**: The exception was declared but never used; `get_collection()` is more efficient than listing all collections
+
+### `app/services/corpus_service.py`
+- **Fixed**: Path containment check now uses `relative_to()` instead of string `startswith()`
+- **Changed**: Uses `yaml.safe_dump()` instead of `yaml.dump()` for safer YAML serialization
+- **Reason**: String prefix matching can be fooled by paths like `/safe-path-not` matching `/safe-path`
+
+### `app/engines/pdf_engine.py`
+- **Fixed**: Added proper resource cleanup with `try/finally` block and explicit `doc.close()`
+- **Changed**: Error message from "Failed to open PDF" to "Failed to process PDF" (more accurate)
+- **Reason**: PyMuPDF's `fitz.open()` doesn't support context manager protocol; explicit close prevents file handle leaks
+
+### `app/ingest/pipeline.py`
+- **Removed**: Unused `Path` import
+- **Added**: Logging to silent `except` block when recording file failure
+- **Fixed**: File lookup query in `_record_failure()` to use correct column
+
+### `app/state/db.py`
+- **Removed**: Unused `Optional` import from typing
+
+### `app/providers/factory.py`
+- **Removed**: Unused `List` import from typing
+
+### `app/api/routes/ingest.py`
+- **Changed**: `get_database()` is now a generator that yields the database and closes it in `finally`
+- **Reason**: Previous implementation didn't close the database connection after use
+
+### `app/gui/routes.py`
+- **Added**: `get_database()` function for proper database lifecycle management
+- **Changed**: `get_stats_service()` now uses `Database` instance instead of direct path
+- **Removed**: Unused `Depends` and `Optional` imports
+
+### `app/gui/templates/search_results.html`
+- **Fixed**: Falsy check for `chunk_index` now uses `is not none` instead of truthiness test
+- **Reason**: `chunk_index=0` is a valid value but evaluates as falsy, causing incorrect fallback to page_number
+
+---
+
+## Summary of All Changes
+
+| Round | Category | Issues Fixed |
+|-------|----------|-------------|
+| 1 | Security | 3 |
+| 1 | Architecture | 4 |
+| 1 | Error Handling | 3 |
+| 1 | Code Quality | 8 |
+| 1 | Performance | 2 |
+| 2 | PR Review Feedback | 13 |
+| **Total** | | **33** |

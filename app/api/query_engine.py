@@ -2,7 +2,7 @@
 Query engine for RAG-based search and answer generation.
 Handles vector search, context assembly, and LLM answer generation.
 """
-from typing import List, Dict, Optional, Any
+from typing import Dict, Optional, Any
 from pathlib import Path
 import yaml
 import time
@@ -13,6 +13,7 @@ from ..providers.factory import get_llm_provider
 from ..services.corpus_service import validate_corpus_id, CorpusValidationError
 from ..utils.logging import setup_logging
 from ..config.loader import load_config
+from ..config.schema import GlobalConfig
 
 logger = setup_logging()
 
@@ -36,7 +37,8 @@ class QueryEngine:
         vector_service: VectorService,
         embedder: EmbeddingProvider,
         default_llm: Optional[LLMProvider] = None,
-        default_base_url: Optional[str] = None
+        default_base_url: Optional[str] = None,
+        config: Optional[GlobalConfig] = None
     ):
         """
         Initialize the query engine.
@@ -46,16 +48,24 @@ class QueryEngine:
             embedder: Provider for generating query embeddings
             default_llm: Default LLM provider for answer generation
             default_base_url: Default base URL for LLM providers
+            config: Optional pre-loaded configuration (avoids re-loading)
         """
         self.vector_service = vector_service
         self.embedder = embedder
         self.default_llm = default_llm
+        self.config = config
 
-        # Try to load base_url from config, fall back to default
-        try:
-            config = load_config()
-            self.base_url = config.models.embeddings.base_url
-        except Exception:
+        # Cache config if not provided
+        if self.config is None:
+            try:
+                self.config = load_config()
+            except Exception:
+                self.config = None
+
+        # Resolve base_url from config or fallback
+        if self.config and hasattr(self.config.models, 'embeddings'):
+            self.base_url = self.config.models.embeddings.base_url
+        else:
             self.base_url = default_base_url or DEFAULT_OLLAMA_URL
 
     def _get_corpus_config_path(self, corpus_id: str) -> Optional[Path]:
@@ -70,18 +80,18 @@ class QueryEngine:
         """
         try:
             validate_corpus_id(corpus_id)
-            # Try to use config's library_root
-            try:
-                config = load_config()
-                base_path = Path(config.library_root) / "corpora" / corpus_id
-            except Exception:
+
+            # Use cached config if available
+            if self.config and hasattr(self.config, 'library_root'):
+                base_path = Path(self.config.library_root) / "corpora" / corpus_id
+            else:
                 base_path = Path("rag_library/corpora") / corpus_id
 
             config_path = base_path / "corpus.yaml"
             if config_path.exists():
                 return config_path
-        except CorpusValidationError:
-            pass
+        except CorpusValidationError as e:
+            logger.warning(f"Invalid corpus_id '{corpus_id}': {e}")
         return None
 
     def _resolve_llm(self, corpus_id: str) -> Optional[LLMProvider]:

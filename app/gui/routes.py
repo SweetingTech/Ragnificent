@@ -2,16 +2,16 @@
 GUI routes for the web interface.
 Provides HTML pages for dashboard, search, and corpus management.
 """
-from fastapi import APIRouter, Request, Form, HTTPException, Depends
+from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 from functools import lru_cache
 from pathlib import Path
-import os
 
 from ..config.loader import load_config
 from ..config.schema import GlobalConfig
+from ..state.db import Database
 from ..state.stats import StatsService
 from ..vector.qdrant_client import VectorService
 from ..providers.ollama import OllamaLLM
@@ -38,6 +38,12 @@ def get_config() -> GlobalConfig:
     return load_config()
 
 
+def get_database() -> Database:
+    """Get database instance."""
+    config = get_config()
+    return Database(config.get_state_db_path())
+
+
 def get_corpus_service() -> CorpusService:
     """Get corpus service instance."""
     config = get_config()
@@ -45,9 +51,9 @@ def get_corpus_service() -> CorpusService:
 
 
 def get_stats_service() -> StatsService:
-    """Get stats service instance."""
-    config = get_config()
-    return StatsService(config.get_state_db_path())
+    """Get stats service instance with Database."""
+    db = get_database()
+    return StatsService(db)
 
 
 def get_vector_service() -> VectorService:

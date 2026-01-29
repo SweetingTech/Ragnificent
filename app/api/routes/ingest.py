@@ -4,7 +4,7 @@ Ingestion API routes for triggering document processing.
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Generator
 from functools import lru_cache
 
 from ...config.loader import load_config
@@ -33,10 +33,18 @@ def get_config() -> GlobalConfig:
     return load_config()
 
 
-def get_database() -> Database:
-    """Get database instance."""
+def get_database() -> Generator[Database, None, None]:
+    """
+    Get database instance with cleanup.
+
+    Yields the database and closes it when done.
+    """
     config = get_config()
-    return Database(config.get_state_db_path())
+    db = Database(config.get_state_db_path())
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def get_vector_service() -> VectorService:
@@ -45,10 +53,11 @@ def get_vector_service() -> VectorService:
     return VectorService(config.vector_db.url, config.vector_db.collection_prefix)
 
 
-def get_pipeline() -> IngestionPipeline:
-    """Get ingestion pipeline instance."""
+def get_pipeline(
+    db: Database = Depends(get_database)
+) -> IngestionPipeline:
+    """Get ingestion pipeline instance with database dependency."""
     config = get_config()
-    db = get_database()
     vector_service = get_vector_service()
     return IngestionPipeline(config, db, vector_service)
 
@@ -85,10 +94,9 @@ async def run_ingest(
         )
     except Exception as e:
         logger.error(f"Ingestion failed: {e}")
-        return IngestResponse(
-            status="error",
-            message=str(e),
-            summary=None
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ingestion failed: {e}"
         )
 
 

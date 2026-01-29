@@ -1,7 +1,6 @@
 """
 Provider factory for creating embedding and LLM provider instances.
 """
-from typing import List
 from .base import EmbeddingProvider, LLMProvider
 from .ollama import OllamaProvider, OllamaLLM
 

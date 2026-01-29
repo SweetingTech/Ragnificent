@@ -5,7 +5,7 @@ Uses thread-local storage to ensure each thread has its own connection.
 import sqlite3
 import os
 import threading
-from typing import Optional, Generator
+from typing import Generator
 from contextlib import contextmanager
 from ..utils.logging import setup_logging
 

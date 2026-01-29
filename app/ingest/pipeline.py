@@ -3,7 +3,6 @@ Document ingestion pipeline for processing and indexing documents.
 Handles file scanning, extraction, chunking, embedding, and storage.
 """
 from typing import Optional, List, Dict, Any
-from pathlib import Path
 import os
 import glob
 import time
@@ -173,8 +172,8 @@ class IngestionPipeline:
             # Check if file already processed (use context manager for proper cleanup)
             with self.db.cursor() as cursor:
                 cursor.execute(
-                    "SELECT file_hash, status FROM files WHERE file_path = ? AND corpus_id = ?",
-                    (file_path, corpus_id)
+                    "SELECT file_hash, status FROM files WHERE file_hash = ?",
+                    (current_hash,)
                 )
                 row = cursor.fetchone()
 
@@ -248,8 +247,9 @@ class IngestionPipeline:
             logger.error(f"Failed to process {file_path}: {e}")
             try:
                 self._record_failure(file_path, corpus_id, hash_file(file_path), str(e))
-            except Exception:
-                pass
+            except Exception as record_err:
+                # Log the error when recording failure, but don't fail the overall process
+                logger.warning(f"Failed to record failure for {file_path}: {record_err}")
             return "failed"
 
     def _record_success(self, file_path: str, corpus_id: str, file_hash: str) -> None:
@@ -268,6 +268,6 @@ class IngestionPipeline:
                 INSERT OR REPLACE INTO files
                 (file_hash, file_path, corpus_id, size_bytes, last_modified, status, last_error, failure_count, updated_at)
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'FAILED', ?,
-                    COALESCE((SELECT failure_count FROM files WHERE file_path = ? AND corpus_id = ?), 0) + 1,
+                    COALESCE((SELECT failure_count FROM files WHERE file_hash = ?), 0) + 1,
                     CURRENT_TIMESTAMP)
-            """, (file_hash, file_path, corpus_id, os.path.getsize(file_path), error, file_path, corpus_id))
+            """, (file_hash, file_path, corpus_id, os.path.getsize(file_path), error, file_hash))

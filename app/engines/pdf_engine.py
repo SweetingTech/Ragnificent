@@ -6,7 +6,7 @@ import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
 import io
-from typing import Dict, Any, TypedDict
+from typing import Dict, Any, TypedDict, Optional
 from ..utils.logging import setup_logging
 from ..config.schema import GlobalConfig
 
@@ -60,7 +60,10 @@ class PdfEngine:
         full_text = []
         ocr_applied = False
         ocr_page_count = 0
+        total_pages = 0
 
+        # Use context manager to ensure PDF is always closed
+        doc = None
         try:
             doc = fitz.open(file_path)
             total_pages = len(doc)
@@ -85,11 +88,13 @@ class PdfEngine:
 
                 full_text.append(text)
 
-            doc.close()
-
         except Exception as e:
-            logger.error(f"Failed to open PDF {file_path}: {e}")
+            logger.error(f"Failed to process PDF {file_path}: {e}")
             raise
+        finally:
+            # Always close the document
+            if doc is not None:
+                doc.close()
 
         # Join pages with double newlines
         full_text_str = "\n\n".join(full_text)
@@ -107,7 +112,7 @@ class PdfEngine:
             "metadata": metadata
         }
 
-    def _extract_page_ocr(self, page, page_num: int) -> str | None:
+    def _extract_page_ocr(self, page, page_num: int) -> Optional[str]:
         """
         Extract text from a page using OCR.
 

@@ -103,7 +103,10 @@ class CorpusService:
         resolved = corpus_path.resolve()
         corpora_resolved = self.corpora_path.resolve()
 
-        if not str(resolved).startswith(str(corpora_resolved)):
+        # Use path-aware containment check instead of string prefix
+        try:
+            resolved.relative_to(corpora_resolved)
+        except ValueError:
             raise CorpusValidationError("Invalid corpus path - path traversal detected")
 
         return corpus_path
@@ -245,7 +248,8 @@ class CorpusService:
 
         config_path = corpus_path / "corpus.yaml"
         with open(config_path, "w") as f:
-            yaml.dump(config_content, f, default_flow_style=False, allow_unicode=True)
+            # Use safe_dump to keep YAML in safe subset
+            yaml.safe_dump(config_content, f, default_flow_style=False, allow_unicode=True)
 
         logger.info(f"Created corpus: {corpus_id} at {corpus_path}")
 
