@@ -1,137 +1,64 @@
-# Ragnificent
+# RAG Librarian (Custodian)
 
-> A unified framework for creating and managing agentic RAG (Retrieval-Augmented Generation) databases with streamlined search and recovery capabilities.
+A local-first "Librarian" service that ingests documents from themed folders (corpora), deduplicates them by content hash, extracts text, chunks intelligently, embeds, and stores everything in a persistent vector index (Qdrant) for retrieval with citations.
 
-## 🌟 Overview
+## Features
 
-Ragnificent is a powerful tool designed to simplify the creation and management of agentic RAG databases. It provides a unified interface that streamlines the process of building intelligent retrieval systems, making it easier to implement better search and recovery functionalities in your AI applications.
+- **Local-first**: Designed for on-prem usage.
+- **Idempotent Ingestion**: Skips duplicates, handles incremental updates.
+- **Lane-based Extraction**: Native PDF or OCR (Tesseract/OCRmyPDF).
+- **Persistent State**: SQLite tracking of every file and chunk.
 
-## ✨ Features
+## Requirements
 
-- **Unified Interface**: Single, consistent API for managing RAG databases across different backends
-- **Agentic RAG Support**: Built-in support for agent-based retrieval patterns
-- **Streamlined Creation**: Simplified workflows for setting up and configuring RAG databases
-- **Enhanced Search**: Optimized search capabilities for better information retrieval
-- **Efficient Recovery**: Robust recovery mechanisms to ensure data integrity
-- **Extensible Architecture**: Modular design allowing easy integration with various vector stores and embeddings
+- Python 3.11+
+- Qdrant (via Docker recommended)
+- Optional: Tesseract OCR, Ghostscript (for OCR features)
 
-## 🚀 Getting Started
+## Quickstart
 
-### Prerequisites
+### 1. Setup
 
-- Python 3.9 or higher (recommended)
-- pip or your preferred package manager
+Run the setup script to create folders and install dependencies:
 
-### Installation
+```powershell
+./scripts/windows/setup.ps1
+```
+
+### 2. Configure
+
+Edit `config.yaml` to set your paths and provider settings.
+Edit `rag_library/corpora/*/corpus.yaml` for corpus-specific settings.
+
+### 3. Start Infrastructure
+
+Start Qdrant using Docker:
 
 ```bash
-# Clone the repository
-git clone https://github.com/SweetingTech/Ragnificent.git
-cd Ragnificent
-
-# Install dependencies (when available)
-pip install -r requirements.txt
+docker-compose up -d qdrant
 ```
 
-## 📖 Usage
+### 4. Initialize Database
 
-### Basic Example
-
-> **Note**: The following is a planned API design. This functionality will be implemented as the project develops.
-
-```python
-from ragnificent import RAGDatabase
-
-# Initialize a RAG database
-rag_db = RAGDatabase(
-    name="my_knowledge_base",
-    embedding_model="text-embedding-ada-002"
-)
-
-# Add documents
-rag_db.add_documents([
-    {"text": "Your document content here", "metadata": {"source": "example.txt", "author": "John Doe"}}
-])
-
-# Search with agentic capabilities
-results = rag_db.search(
-    query="What is agentic RAG?",
-    agent_mode=True
-)
+```powershell
+./scripts/windows/init_state_db.ps1
 ```
 
-## 🏗️ Project Structure
+### 5. Run the Service
 
-```
-Ragnificent/
-├── README.md           # Project documentation
-├── LICENSE            # MIT License
-└── (additional files to be added)
+```powershell
+./scripts/windows/run.ps1
 ```
 
-## 🎯 Core Concepts
+The API will be available at `http://localhost:8008`.
 
-### Agentic RAG
+## Folder Structure
 
-Agentic RAG systems combine traditional retrieval-augmented generation with agent-based reasoning, allowing for:
-- Multi-step retrieval strategies
-- Dynamic query refinement
-- Context-aware information gathering
-- Intelligent result synthesis
+- `app/`: Source code
+- `rag_library/`: Default location for your documents (inbox) and database.
+- `scripts/`: Helper scripts for Windows and Docker.
 
-### Unified Interface
+## Usage
 
-Ragnificent provides a consistent API layer that abstracts away the complexity of different:
-- Vector databases (Pinecone, Weaviate, Chroma, etc.)
-- Embedding models (OpenAI, Cohere, local models)
-- Retrieval strategies (dense, sparse, hybrid)
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-### Development Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/SweetingTech/Ragnificent.git
-cd Ragnificent
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Run tests (when available)
-pytest
-```
-
-## 📝 Roadmap
-
-- [ ] Core RAG database abstraction layer
-- [ ] Support for multiple vector store backends
-- [ ] Agentic retrieval strategies
-- [ ] Query optimization and caching
-- [ ] Document preprocessing pipeline
-- [ ] Evaluation and benchmarking tools
-- [ ] REST API and CLI interface
-- [ ] Documentation and examples
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 👤 Author
-
-**DJay Sweeting**
-
-## 🙏 Acknowledgments
-
-- Inspired by the growing need for unified RAG solutions
-- Built for the AI agent development community
-
-## 📧 Contact
-
-For questions, issues, or suggestions, please open an issue on GitHub.
-
----
-
-**Note**: This project is under active development. APIs and features may change as the project evolves.
+Drop files into `rag_library/corpora/<corpus_id>/inbox` and run ingestion (API or script coming soon).
+transcripts

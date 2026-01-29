@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: always
+
+  librarian:
+    build: .
+    volumes:
+      - ./rag_library:/data/library
+      - ./rag_library/state:/data/state
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - LIBRARY_ROOT=/data/library
+      - STATE_DB_PATH=/data/state/ingest.sqlite
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      - qdrant
+    ports:
+      - "8008:8008"
+
+volumes:
+  qdrant_storage:

@@ -1,0 +1,35 @@
+library_root: "d:/github/Ragnificent/rag_library"
+
+ingest:
+  poll_interval_seconds: 300
+  max_parallel_files: 1
+  lock_file: "d:/github/Ragnificent/rag_library/.locks/ingest.lock"
+  ocr_trigger:
+    min_chars_per_page: 200
+    min_dictionary_word_ratio: 0.35
+
+extraction:
+  pdf_backend: "pymupdf"
+  normalize:
+    dehyphenate: true
+    strip_headers_footers: true
+
+ocr:
+  backend: "ocrmypdf"
+  ocrmypdf:
+    language: "eng"
+    deskew: true
+    rotate_pages: true
+    clean: true
+    cache_dir: "d:/github/Ragnificent/rag_library/cache/ocr"
+
+models:
+  embeddings:
+    provider: "ollama"
+    base_url: "http://localhost:11434"
+    model: "nomic-embed-text"
+
+vector_db:
+  backend: "qdrant"
+  url: "http://localhost:6333"
+  collection_prefix: "instance01"
