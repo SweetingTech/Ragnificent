@@ -62,6 +62,18 @@ class VectorService:
         )
         logger.info(f"Deleted chunks for file {file_hash} in {collection_name}")
 
+    def search(self, corpus_id: str, vector: List[float], limit: int = 5):
+        collection_name = self._get_collection_name(corpus_id)
+        try:
+            return self.client.search(
+                collection_name=collection_name,
+                query_vector=vector,
+                limit=limit
+            )
+        except Exception as e:
+            logger.error(f"Search failed for {collection_name}: {e}")
+            return []
+
     def get_count(self, corpus_id: str) -> int:
         collection_name = self._get_collection_name(corpus_id)
         try:

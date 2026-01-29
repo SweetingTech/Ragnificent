@@ -1,0 +1,8 @@
+corpus_id: cyber_blue
+description: "Content for cyber_blue"
+retain_on_missing: true
+chunking:
+  default:
+    strategy: "pdf_sections"
+    max_tokens: 700
+    overlap_tokens: 80

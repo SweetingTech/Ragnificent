@@ -1,2 +1,2 @@
 $env:PYTHONPATH = "."
-python -m app.cli init-db --config config.yaml
+python -m app.cli --config config.yaml init-db

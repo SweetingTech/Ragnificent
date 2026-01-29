@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Manage {{ corpus.corpus_id }} - Ragnificent{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-8">
+        <h2>Librarian: {{ corpus.corpus_id }}</h2>
+        <p style="color: var(--text-secondary);">{{ corpus.description }}</p>
+    </div>
+    <div class="col-4" style="text-align: right;">
+        <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}" 
+                hx-swap="none"
+                class="btn btn-primary"
+                onclick="alert('Sync started...');">
+            Sync Files Now
+        </button>
+    </div>
+</div>
+
+<div class="grid" style="margin-top: 1rem;">
+    <div class="card">
+        <h3>Configuration</h3>
+        <dl>
+            <dt>Source Path</dt>
+            <dd><code>{{ corpus.source_path }}</code></dd>
+            
+            <dt>Agent Model</dt>
+            <dd>{{ corpus.model }}</dd>
+            
+            <dt>Vector Count</dt>
+            <dd>{{ vector_count }}</dd>
+        </dl>
+    </div>
+    
+    <div class="card">
+        <h3>Ingest Status</h3>
+        <!-- TODO: Show last run time or errors -->
+        <p>Syncing scans the source folder for new or changed files.</p>
+    </div>
+</div>
+
+<div style="margin-top: 2rem;">
+    <a href="/gui/dashboard" class="btn">Back to Dashboard</a>
+</div>
+{% endblock %}

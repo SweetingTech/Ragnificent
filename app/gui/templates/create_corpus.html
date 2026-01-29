@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Add New Librarian - Ragnificent{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 600px;">
+    <h2>Deploy New Librarian</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+        Point to a local folder to create a dedicated RAG database and agent.
+    </p>
+
+    <form action="/gui/corpora/create" method="POST" class="card">
+        <label>Librarian Name (ID)</label>
+        <input type="text" name="corpus_id" placeholder="e.g. engineering_docs" pattern="[a-zA-Z0-9_]+" required>
+        <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
+            Only letters, numbers, and underscores. Used for database collection name.
+        </small>
+
+        <label>Description</label>
+        <input type="text" name="description" placeholder="e.g. Technical Manuals for Project X" required>
+
+        <label>Source Folder Path</label>
+        <input type="text" name="source_path" placeholder="D:\MyDocuments\ProjectX" required>
+        <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
+            Files in this folder will be monitored and ingested.
+        </small>
+
+        <label>Agent Model (Librarian Persona)</label>
+        <select name="llm_model" required>
+            <option value="llama3" selected>Llama 3 (General)</option>
+            <option value="codellama">CodeLlama (Programming)</option>
+            <option value="mistral">Mistral (Fast)</option>
+            <option value="phi3">Phi-3 (Efficient)</option>
+            <option value="gemma">Gemma (Google)</option>
+        </select>
+        <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
+            Select the AI model that will answer questions for this library.
+        </small>
+
+        <div style="margin-top: 1.5rem; text-align: right;">
+            <a href="/gui/dashboard" class="btn">Cancel</a>
+            <button type="submit" class="btn btn-primary">Deploy Librarian</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

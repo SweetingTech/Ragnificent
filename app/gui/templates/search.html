@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Search & Chat - Ragnificent{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>Query Knowledge Base</h3>
+    {% if corpora %}
+    <form hx-post="/api/query/ui" hx-target="#results" hx-indicator="#loading">
+        <label style="display:block; margin-bottom:0.5rem;">Select Context (Librarian)</label>
+        <select name="corpus_id">
+            <option value="" selected>No Specific Library (Ad-Hoc Chat)</option>
+            {% for corpus in corpora %}
+            <option value="{{ corpus.corpus_id }}">{{ corpus.corpus_id }}</option>
+            {% endfor %}
+        </select>
+
+        <label style="display:block; margin-bottom:0.5rem; margin-top: 1rem;">Model (for Ad-Hoc)</label>
+        <select name="llm_model">
+            {% for model in available_models %}
+            <option value="{{ model }}">{{ model }}</option>
+            {% endfor %}
+        </select>
+        <small style="color: var(--text-secondary); margin-bottom: 1rem; display:block;">
+            Only used if no librarian (with assigned agent) is selected.
+        </small>
+
+        <label style="display:block; margin-bottom:0.5rem;">Your Question</label>
+        <div style="display: flex; gap: 1rem;">
+            <input type="text" name="query" placeholder="ex: What is the meaning of life?" required>
+            <button type="submit" class="btn btn-primary">Ask</button>
+        </div>
+    </form>
+    {% else %}
+    <!-- No corpora, but allow ad-hoc chat -->
+    <form hx-post="/api/query/ui" hx-target="#results" hx-indicator="#loading">
+         <h3>Chat with AI (No Library)</h3>
+         <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            No librarians deployed. You can still chat with the local AI models.
+        </p>
+        
+        <label style="display:block; margin-bottom:0.5rem;">Select Model</label>
+        <select name="llm_model">
+            {% for model in available_models %}
+            <option value="{{ model }}">{{ model }}</option>
+            {% endfor %}
+        </select>
+
+        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+            <input type="text" name="query" placeholder="ex: Explain quantum physics..." required>
+            <button type="submit" class="btn btn-primary">Chat</button>
+        </div>
+        
+        <div style="margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+            <a href="/gui/corpora/new" class="btn btn-secondary">Deploy New Librarian</a>
+        </div>
+    </form>
+    {% endif %}
+</div>
+
+<div id="loading" class="htmx-indicator" style="margin: 1rem 0;">
+    <span style="color: var(--accent);">Thinking... (Querying Vector DB & Generating Answer)</span>
+</div>
+
+<div id="results">
+    <!-- Results will replace this via HTMX -->
+</div>
+{% endblock %}

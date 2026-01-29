@@ -25,3 +25,34 @@ class OllamaProvider(EmbeddingProvider):
             resp = ollama.embeddings(model=self.model, prompt=clean_text)
             results.append(resp['embedding'])
         return results
+
+from .base import LLMProvider
+
+class OllamaLLM(LLMProvider):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3"):
+        self.base_url = base_url
+        self.model = model
+        if base_url:
+            os.environ["OLLAMA_HOST"] = base_url
+
+    def generate(self, prompt: str, system_prompt: str = None) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        
+        messages.append({"role": "user", "content": prompt})
+        
+        # Call Ollama Chat
+        response = ollama.chat(model=self.model, messages=messages)
+        return response['message']['content']
+
+    @staticmethod
+    def list_models(base_url: str = "http://localhost:11434") -> List[str]:
+        if base_url:
+            os.environ["OLLAMA_HOST"] = base_url
+        try:
+            models_info = ollama.list()
+            # ollama.list() returns dict with 'models' key which is a list of dicts
+            return [m['name'] for m in models_info.get('models', [])]
+        except Exception:
+            return []

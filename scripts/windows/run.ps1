@@ -1,2 +1,2 @@
 $env:PYTHONPATH = "."
-python -m app.cli serve --config config.yaml
+python -m app.cli --config config.yaml serve

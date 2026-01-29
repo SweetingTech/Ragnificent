@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Ragnificent{% endblock %}
+
+{% block content %}
+<div class="grid">
+    <div class="card">
+        <h3>Inventory Health</h3>
+        <div style="font-size: 2rem; font-weight: bold; margin: 1rem 0;">
+            {{ total_files }} <span style="font-size: 1rem; color: var(--text-secondary);">Files</span>
+        </div>
+        <div>
+            <span class="status-pill status-check">{{ success_count }} Synced</span>
+            <span class="status-pill status-error">{{ failed_count }} Failed</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Vector Index</h3>
+        <div style="font-size: 2rem; font-weight: bold; margin: 1rem 0;">
+            {{ total_vectors }} <span style="font-size: 1rem; color: var(--text-secondary);">Chunks</span>
+        </div>
+         <p style="color: var(--text-secondary);">Backend: {{ vector_backend }}</p>
+    </div>
+</div>
+
+<h2>Active Corpora</h2>
+<div class="grid" style="margin-top: 1rem;">
+    {% for corpus in corpora %}
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:start;">
+            <h3>{{ corpus.corpus_id }}</h3>
+            <div style="display:flex; gap: 0.5rem;">
+                <!-- Trigger Ingest -->
+                <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}" 
+                        hx-swap="none"
+                        class="btn" 
+                        style="font-size: 0.8rem; background: rgba(59, 130, 246, 0.2); color: #60a5fa;"
+                        onclick="alert('Sync started for ' + '{{ corpus.corpus_id }}');">
+                    Sync Files
+                </button>
+                <a href="/gui/corpora/{{ corpus.corpus_id }}" class="btn btn-primary" style="font-size: 0.8rem;">Manage</a>
+            </div>
+        </div>
+        <p style="color: var(--text-secondary); height: 3rem;">{{ corpus.description }}</p>
+        
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+            <small style="color: var(--text-secondary);">Inbox Path:</small><br>
+            <code style="font-size: 0.8rem; word-break: break-all;">{{ corpus.inbox_path }}</code>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Add New Corpus Card -->
+    <div class="card" style="border-style: dashed; display: flex; align-items: center; justify-content: center; cursor: pointer;" 
+         onclick="window.location.href='/gui/corpora/new'">
+        <div style="text-align: center;">
+            <span style="font-size: 2rem; color: var(--text-secondary);">+</span>
+            <p style="color: var(--text-secondary);">Add Corpus</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,8 @@
+corpus_id: dm_green
+description: "Content for dm_green"
+retain_on_missing: true
+chunking:
+  default:
+    strategy: "pdf_sections"
+    max_tokens: 700
+    overlap_tokens: 80

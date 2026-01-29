@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Project Specific
+# Data and State
+rag_library/state/
+rag_library/cache/
+rag_library/.locks/
+
+# User Content (Inbox) - Keep the folder, ignore the content
+rag_library/corpora/*/inbox/*
+!rag_library/corpora/*/inbox/.gitkeep
+
+# Local configuration overrides (optional, but usually we keep config.yaml as the template/default)
+# config.yaml
+# But if it contains secrets or local paths, maybe ignore? 
+# The template is usually config.example.yaml or similar. 
+# idea.md had config.yaml as a deliverable. I will keep it.
+
+# Docker
+docker-compose.override.yml

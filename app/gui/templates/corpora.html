@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Librarians - Ragnificent{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <h2>Deployed Librarians</h2>
+    <a href="/gui/corpora/new" class="btn btn-primary">+ Deploy New</a>
+</div>
+
+{% if corpora %}
+<div class="card">
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+                <th style="padding: 1rem;">ID</th>
+                <th style="padding: 1rem;">Description</th>
+                <th style="padding: 1rem;">Location</th>
+                <th style="padding: 1rem;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for corpus in corpora %}
+            <tr style="border-bottom: 1px solid var(--bg-body);">
+                <td style="padding: 1rem; font-weight: bold;">{{ corpus.corpus_id }}</td>
+                <td style="padding: 1rem; color: var(--text-secondary);">{{ corpus.description }}</td>
+                <td style="padding: 1rem; font-family: monospace; font-size: 0.9rem;">{{ corpus.inbox_path }}</td>
+                <td style="padding: 1rem; text-align: right;">
+                    <a href="/gui/corpora/{{ corpus.corpus_id }}" class="btn" style="font-size: 0.8rem;">Manage</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card" style="text-align: center; padding: 3rem;">
+    <p style="color: var(--text-secondary);">No librarians deployed.</p>
+    <a href="/gui/corpora/new" class="btn btn-secondary">Create your first one</a>
+</div>
+{% endif %}
+{% endblock %}

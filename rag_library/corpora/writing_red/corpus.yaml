@@ -1,0 +1,8 @@
+corpus_id: writing_red
+description: "Content for writing_red"
+retain_on_missing: true
+chunking:
+  default:
+    strategy: "pdf_sections"
+    max_tokens: 700
+    overlap_tokens: 80

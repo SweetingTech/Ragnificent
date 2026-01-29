@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Ragnificent{% endblock %}</title>
+    <link href="/static/styles.css" rel="stylesheet">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- Simple hyperscript or alpine can be added if more interactivity needed -->
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Ragnificent</h1>
+                <p style="color: var(--text-secondary); margin-top: 0.25rem;">Intelligent Data Custodian</p>
+            </div>
+            <nav class="nav-links">
+                <a href="/gui/dashboard" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+                <a href="/gui/corpora" class="{% if active_page == 'corpora' %}active{% endif %}">Corpora</a>
+                <a href="/gui/search" class="{% if active_page == 'search' %}active{% endif %}">Search & Chat</a>
+            </nav>
+        </header>
+
+        <main id="main-content" class="fade-in">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</body>
+</html>

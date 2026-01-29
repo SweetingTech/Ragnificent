@@ -1,0 +1,23 @@
+<div class="card" style="border-left: 4px solid var(--accent);">
+    <h3>Answer</h3>
+    <div style="font-size: 1.1rem; line-height: 1.7;">
+        {{ answer_html | safe }}
+    </div>
+</div>
+
+<h3>citations</h3>
+<div class="grid">
+    {% for hit in hits %}
+    <div class="card" style="padding: 1rem; font-size: 0.9rem;">
+        <div style="margin-bottom: 0.5rem; color: var(--accent); font-weight: bold;">
+            {{ hit.payload.file_name }} (Page {{ hit.payload.page_number }})
+        </div>
+        <div style="color: var(--text-secondary); margin-bottom: 0.5rem;">
+            Score: {{ "%.2f"|format(hit.score) }}
+        </div>
+        <div style="background: rgba(0,0,0,0.3); padding: 0.5rem; border-radius: 4px; font-family: monospace;">
+            ...{{ hit.payload.text[:200] }}...
+        </div>
+    </div>
+    {% endfor %}
+</div>

@@ -6,10 +6,12 @@ from .state.db import Database
 
 def cmd_serve(args):
     import uvicorn
-    print("Starting API server...")
-    # In a real app, we'd import the FastAPI app and run it
-    # uvicorn.run("app.api.server:app", host="0.0.0.0", port=8008, reload=True)
-    print("API server stub. Use 'uvicorn app.api.server:app' once implemented.")
+    # Loading config to get port/host could be done here if we want to honor config.yaml
+    # For now, hardcode defaults or read from args (which we don't have for port/host yet)
+    # The .env says API_PORT=8008. 
+    # Let's just use the hardcoded 8008 for now as per instructions.
+    print("Starting API server on port 8008...")
+    uvicorn.run("app.api.server:app", host="0.0.0.0", port=8008, reload=True)
 
 def cmd_init_db(args):
     config = load_config(args.config)

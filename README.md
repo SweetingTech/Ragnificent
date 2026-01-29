@@ -2,6 +2,38 @@
 
 A local-first "Librarian" service that ingests documents from themed folders (corpora), deduplicates them by content hash, extracts text, chunks intelligently, embeds, and stores everything in a persistent vector index (Qdrant) for retrieval with citations.
 
+## Architecture & Dataflow
+
+```mermaid
+graph TD
+    subgraph User Interaction
+    A[User/Agent] -->|1. Creates Librarian| B(GUI/API)
+    A -->|2. Drops Files| C(Source Folder)
+    A -->|5. Queries| B
+    end
+    
+    subgraph Ingestion Pipeline
+    B -->|3. Trigger Sync| D[Pipeline Engine]
+    D -->|Scan| C
+    D -->|Extract Text| E[Extration Lane]
+    E -->|Native PDF| F[PyMuPDF]
+    E -->|Code/Text| G[Text Loader]
+    E --> H{Chunker}
+    H -->|Split| I[Chunks]
+    I -->|Embed| J[Ollama/Provider]
+    J -->|Upsert| K[(Qdrant Vector DB)]
+    D -->|Update State| L[(SQLite State DB)]
+    end
+    
+    subgraph Retrieval Pipeline
+    B -->|Query| M[Query Engine]
+    M -->|Embed Query| J
+    M -->|Search| K
+    K -->|Hits| M
+    M -->|Results| A
+    end
+```
+
 ## Features
 
 - **Local-first**: Designed for on-prem usage.
