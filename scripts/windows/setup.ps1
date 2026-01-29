@@ -23,10 +23,16 @@ $Corpora = @("cyber_blue", "writing_red", "dm_green")
 foreach ($Corpus in $Corpora) {
     $Path = "$LibraryRoot/corpora/$Corpus/corpus.yaml"
     if (-not (Test-Path $Path)) {
+        $InboxPath = "$LibraryRoot/corpora/$Corpus/inbox"
         $Content = @"
 corpus_id: $Corpus
 description: "Content for $Corpus"
+source_path: "$InboxPath"
 retain_on_missing: true
+models:
+  answer:
+    provider: "ollama"
+    model: "llama3"
 chunking:
   default:
     strategy: "pdf_sections"

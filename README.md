@@ -53,8 +53,14 @@ graph TD
 
 Run the setup script to create folders and install dependencies:
 
+**Windows (PowerShell):**
 ```powershell
 ./scripts/windows/setup.ps1
+```
+
+**Linux/macOS:**
+```bash
+./scripts/linux/setup.sh
 ```
 
 ### 2. Configure
@@ -72,14 +78,26 @@ docker-compose up -d qdrant
 
 ### 4. Initialize Database
 
+**Windows (PowerShell):**
 ```powershell
 ./scripts/windows/init_state_db.ps1
 ```
 
+**Linux/macOS:**
+```bash
+./scripts/linux/init_state_db.sh
+```
+
 ### 5. Run the Service
 
+**Windows (PowerShell):**
 ```powershell
 ./scripts/windows/run.ps1
+```
+
+**Linux/macOS:**
+```bash
+./scripts/linux/run.sh
 ```
 
 The API will be available at `http://localhost:8008`.
@@ -88,9 +106,44 @@ The API will be available at `http://localhost:8008`.
 
 - `app/`: Source code
 - `rag_library/`: Default location for your documents (inbox) and database.
-- `scripts/`: Helper scripts for Windows and Docker.
+- `scripts/windows/`: Helper scripts for Windows (PowerShell)
+- `scripts/linux/`: Helper scripts for Linux/macOS (Bash)
 
 ## Usage
 
 Drop files into `rag_library/corpora/<corpus_id>/inbox` and run ingestion (API or script coming soon).
-transcripts
+
+## Code Quality & Security
+
+The codebase has undergone a comprehensive code review with 33 issues addressed:
+
+### Security Improvements
+- **Path Traversal Protection**: All corpus IDs are validated against strict regex patterns with path resolution verification
+- **Environment Variable Safety**: Removed global `os.environ` mutations; providers use explicit configuration
+- **YAML Sanitization**: User inputs are sanitized before writing to YAML files using `yaml.safe_dump()`
+
+### Architecture Improvements
+- **Thread-Safe Database**: SQLite connections use thread-local storage with WAL mode for concurrent access
+- **Dependency Injection**: FastAPI routes use proper `Depends()` pattern instead of module-level globals
+- **Async Non-Blocking I/O**: Blocking operations run via `asyncio.to_thread()` to avoid event loop blocking
+- **Centralized Services**: `CorpusService` provides single source of truth for corpus operations
+
+### Resource Management
+- **Database Lifecycle**: All database connections properly closed via generators with cleanup
+- **PDF Handling**: Proper `try/finally` blocks ensure file handles are released
+- **Collection Caching**: Qdrant collection existence checks use O(1) lookups with caching
+
+See `20260129_Changelog.md` for the complete list of changes.
+
+## CLI Commands
+
+```bash
+# Initialize the database
+python -m app.cli init-db
+
+# Start the server
+python -m app.cli serve
+
+# Run ingestion for a corpus
+python -m app.cli ingest --corpus <corpus_id>
+```

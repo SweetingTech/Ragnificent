@@ -1,58 +1,111 @@
-import ollama
-from typing import List
-from .base import EmbeddingProvider
-import os
+"""
+Ollama provider implementations for embeddings and LLM.
+Uses the Ollama Python client with explicit host configuration (no global env vars).
+"""
+from typing import List, Optional
+from ollama import Client
+from .base import EmbeddingProvider, LLMProvider
+from ..utils.logging import setup_logging
+
+logger = setup_logging()
+
 
 class OllamaProvider(EmbeddingProvider):
+    """Embedding provider using Ollama's embedding models."""
+
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "nomic-embed-text"):
+        """
+        Initialize the Ollama embedding provider.
+
+        Args:
+            base_url: URL of the Ollama server
+            model: Name of the embedding model to use
+        """
         self.base_url = base_url
         self.model = model
-        # The official python client uses OLLAMA_HOST env var automatically or we can pass client.
-        # But for now, let's assume it reads env or we just set it.
-        if base_url:
-            os.environ["OLLAMA_HOST"] = base_url
-            
+        # Use explicit Client instead of global env var
+        self._client = Client(host=base_url)
+
     def embed(self, texts: List[str]) -> List[List[float]]:
-        # Ollama batch embed ? currently ollama-python .embeddings() is one by one or maybe batch?
-        # The new /api/embed (if available) supports batch.
-        # But 'embeddings' call is usually single.
-        # We'll iterate for safety or check library capabilities.
+        """
+        Generate embeddings for a list of texts.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            List of embedding vectors (list of floats)
+        """
         results = []
         for text in texts:
-            # We assume ollama.embeddings returns {'embedding': [...]}
-            # clean newlines to avoid issues
+            # Clean newlines to avoid issues with some models
             clean_text = text.replace("\n", " ")
-            resp = ollama.embeddings(model=self.model, prompt=clean_text)
-            results.append(resp['embedding'])
+            try:
+                resp = self._client.embeddings(model=self.model, prompt=clean_text)
+                results.append(resp['embedding'])
+            except Exception as e:
+                logger.error(f"Embedding failed for text chunk: {e}")
+                raise
         return results
 
-from .base import LLMProvider
 
 class OllamaLLM(LLMProvider):
+    """LLM provider using Ollama's chat models."""
+
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3"):
+        """
+        Initialize the Ollama LLM provider.
+
+        Args:
+            base_url: URL of the Ollama server
+            model: Name of the LLM model to use
+        """
         self.base_url = base_url
         self.model = model
-        if base_url:
-            os.environ["OLLAMA_HOST"] = base_url
+        # Use explicit Client instead of global env var
+        self._client = Client(host=base_url)
 
-    def generate(self, prompt: str, system_prompt: str = None) -> str:
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        """
+        Generate a response using the LLM.
+
+        Args:
+            prompt: The user prompt
+            system_prompt: Optional system prompt for context
+
+        Returns:
+            Generated text response
+        """
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        
+
         messages.append({"role": "user", "content": prompt})
-        
-        # Call Ollama Chat
-        response = ollama.chat(model=self.model, messages=messages)
-        return response['message']['content']
+
+        try:
+            response = self._client.chat(model=self.model, messages=messages)
+            return response['message']['content']
+        except Exception as e:
+            logger.error(f"LLM generation failed: {e}")
+            raise
 
     @staticmethod
     def list_models(base_url: str = "http://localhost:11434") -> List[str]:
-        if base_url:
-            os.environ["OLLAMA_HOST"] = base_url
+        """
+        List available models from the Ollama server.
+
+        Args:
+            base_url: URL of the Ollama server
+
+        Returns:
+            List of model names available on the server
+        """
         try:
-            models_info = ollama.list()
+            # Create a temporary client for listing models
+            client = Client(host=base_url)
+            models_info = client.list()
             # ollama.list() returns dict with 'models' key which is a list of dicts
             return [m['name'] for m in models_info.get('models', [])]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to list Ollama models: {e}")
             return []

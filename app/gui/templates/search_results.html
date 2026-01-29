@@ -1,23 +1,40 @@
 <div class="card" style="border-left: 4px solid var(--accent);">
     <h3>Answer</h3>
     <div style="font-size: 1.1rem; line-height: 1.7;">
-        {{ answer_html | safe }}
+        {% if answer %}
+            {{ answer | e }}
+        {% else %}
+            <p>No answer generated.</p>
+        {% endif %}
     </div>
+    {% if time %}
+    <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem;">
+        Query completed in {{ "%.2f"|format(time) }}s
+    </div>
+    {% endif %}
 </div>
 
-<h3>citations</h3>
+<h3>Citations</h3>
 <div class="grid">
     {% for hit in hits %}
     <div class="card" style="padding: 1rem; font-size: 0.9rem;">
         <div style="margin-bottom: 0.5rem; color: var(--accent); font-weight: bold;">
-            {{ hit.payload.file_name }} (Page {{ hit.payload.page_number }})
+            {{ hit.payload.file_name or 'Unknown file' }} (Section {{ hit.payload.chunk_index if hit.payload.chunk_index is not none else (hit.payload.page_number if hit.payload.page_number is not none else '?') }})
         </div>
         <div style="color: var(--text-secondary); margin-bottom: 0.5rem;">
             Score: {{ "%.2f"|format(hit.score) }}
         </div>
-        <div style="background: rgba(0,0,0,0.3); padding: 0.5rem; border-radius: 4px; font-family: monospace;">
-            ...{{ hit.payload.text[:200] }}...
+        <div style="background: rgba(0,0,0,0.3); padding: 0.5rem; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">
+            {% if hit.payload.text %}
+                {{ hit.payload.text[:300] }}{% if hit.payload.text|length > 300 %}...{% endif %}
+            {% else %}
+                (No text preview available)
+            {% endif %}
         </div>
+    </div>
+    {% else %}
+    <div class="card" style="padding: 1rem;">
+        <p>No matching documents found.</p>
     </div>
     {% endfor %}
 </div>
