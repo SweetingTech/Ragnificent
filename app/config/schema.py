@@ -42,15 +42,27 @@ class AnswerModelConfig(BaseModel):
     model: str = "llama3"
 
 
+class RerankConfig(BaseModel):
+    """Configuration for the reranker."""
+    enabled: bool = False
+    provider: str = "ollama"
+    base_url: str = "http://localhost:11434"
+    model: str = "llama3"
+
+
 class ModelsConfig(BaseModel):
     embeddings: EmbeddingsConfig
     answer: Optional[AnswerModelConfig] = None
+    rerank: Optional[RerankConfig] = None
 
 
 class VectorDbConfig(BaseModel):
     backend: str
     url: str
     collection_prefix: str
+    vector_size: Optional[int] = None
+    on_disk: bool = True
+    hnsw_on_disk: bool = True
 
 
 class StateDbConfig(BaseModel):

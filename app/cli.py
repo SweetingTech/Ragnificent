@@ -69,6 +69,59 @@ def cmd_ingest(args):
         db.close()
 
 
+def cmd_ingest_file(args):
+    """Ingest a specific file directly into a corpus (e.g., from Discord/OpenClaw)."""
+    import shutil
+    import uuid
+    from pathlib import Path
+    from .config.loader import load_config
+    from .state.db import Database
+    from .vector.qdrant_client import VectorService
+    from .ingest.pipeline import IngestionPipeline
+
+    config = load_config(args.config)
+    db_path = config.get_state_db_path()
+
+    # Verify corpus exists
+    from .services.corpus_service import CorpusService
+    corpus_service = CorpusService(config.library_root)
+    corpus_metadata = corpus_service.get_corpus_metadata(args.corpus)
+    if not corpus_metadata:
+        logger.error(f"Corpus {args.corpus} not found.")
+        return
+
+    inbox_path = Path(corpus_metadata["inbox_path"])
+    source_file = Path(args.file)
+
+    if not source_file.exists():
+        logger.error(f"Source file {source_file} does not exist.")
+        return
+
+    # Create a unique filename in the inbox to prevent overwriting
+    # We prefix with a short uuid to ensure uniqueness while keeping the original extension
+    unique_id = str(uuid.uuid4())[:8]
+    dest_name = f"{source_file.stem}_{unique_id}{source_file.suffix}"
+    dest_file = inbox_path / dest_name
+
+    logger.info(f"Copying {source_file} to {dest_file}")
+    shutil.copy2(source_file, dest_file)
+
+    # Initialize and run pipeline just for this corpus
+    db = Database(db_path)
+    vector_service = VectorService(config.vector_db.url, config.vector_db.collection_prefix)
+    pipeline = IngestionPipeline(config, db, vector_service)
+
+    logger.info(f"Running ingestion for corpus: {args.corpus}")
+    try:
+        pipeline.run_once(args.corpus)
+        logger.info("Single file ingestion completed successfully.")
+    except Exception as e:
+        logger.error(f"Ingestion failed: {e}")
+        raise
+    finally:
+        db.close()
+
+
 def main():
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
@@ -102,6 +155,20 @@ def main():
         help="Specific corpus ID to ingest (default: all)"
     )
 
+    # Ingest file command
+    ingest_file_parser = subparsers.add_parser("ingest-file", help="Ingest a specific file (e.g., from Discord)")
+    ingest_file_parser.add_argument(
+        "file",
+        type=str,
+        help="Path to the file to ingest"
+    )
+    ingest_file_parser.add_argument(
+        "--corpus",
+        type=str,
+        required=True,
+        help="Specific corpus ID to ingest into"
+    )
+
     args = parser.parse_args()
 
     if args.command == "serve":
@@ -110,6 +177,8 @@ def main():
         cmd_init_db(args)
     elif args.command == "ingest":
         cmd_ingest(args)
+    elif args.command == "ingest-file":
+        cmd_ingest_file(args)
     else:
         parser.print_help()
 

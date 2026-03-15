@@ -33,3 +33,6 @@ vector_db:
   backend: "qdrant"
   url: "http://localhost:6333"
   collection_prefix: "instance01"
+  vector_size: null
+  on_disk: true
+  hnsw_on_disk: true

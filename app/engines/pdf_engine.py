@@ -23,23 +23,29 @@ class PdfExtractionResult(TypedDict):
     metadata: Dict[str, Any]
 
 
-class PdfEngine:
+from .base import Extractor, ExtractionResult
+from .ocr_base import OCREngine
+from .ocr_tesseract import TesseractEngine
+
+class PdfEngine(Extractor):
     """Engine for extracting text from PDF documents with OCR fallback."""
 
-    def __init__(self, config: GlobalConfig):
+    def __init__(self, config: GlobalConfig, ocr_engine: Optional[OCREngine] = None):
         """
         Initialize the PDF extraction engine.
 
         Args:
             config: Global configuration object
+            ocr_engine: Optional OCREngine to use. Defaults to TesseractEngine.
         """
         self.config = config
         self.min_chars = config.ingest.ocr_trigger.get(
             'min_chars_per_page',
             DEFAULT_MIN_CHARS_PER_PAGE
         )
+        self.ocr_engine = ocr_engine or TesseractEngine()
 
-    def extract(self, file_path: str) -> PdfExtractionResult:
+    def extract(self, file_path: str) -> ExtractionResult:
         """
         Extract text from a PDF file.
 
@@ -128,12 +134,18 @@ class PdfEngine:
             mat = fitz.Matrix(OCR_ZOOM_FACTOR, OCR_ZOOM_FACTOR)
             pix = page.get_pixmap(matrix=mat)
 
-            # Convert to PIL Image
+            # Convert to raw bytes
             img_data = pix.tobytes("png")
-            image = Image.open(io.BytesIO(img_data))
 
-            # Run Tesseract OCR
-            ocr_text = pytesseract.image_to_string(image)
+            # Run OCR through the generic interface
+            try:
+                ocr_text = self.ocr_engine.extract_text(img_data)
+            except NotImplementedError:
+                # If injected engine doesn't support text from bytes (e.g. OCRmyPDF),
+                # fallback to basic Tesseract for this page
+                from .ocr_tesseract import TesseractEngine
+                fallback_engine = TesseractEngine()
+                ocr_text = fallback_engine.extract_text(img_data)
 
             logger.info(f"OCR extracted {len(ocr_text)} chars from page {page_num}")
             return ocr_text
