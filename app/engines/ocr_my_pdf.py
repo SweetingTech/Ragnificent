@@ -6,11 +6,11 @@ image-to-text engines because OCRmyPDF creates a new PDF with a text layer.
 import subprocess
 import tempfile
 import os
+import fitz
 from typing import Optional
 from .ocr_base import OCREngine
 from ..config.schema import GlobalConfig
 from ..utils.logging import setup_logging
-from .pdf_pymupdf import PdfEngine as PyMuPdfEngine
 
 logger = setup_logging()
 
@@ -67,9 +67,14 @@ class OCRmyPDFEngine(OCREngine):
 
             # Now extract the text from the searchable PDF
             logger.info("Extracting text from OCR'd PDF")
-            pdf_engine = PyMuPdfEngine(config=self.config)
-            result_data = pdf_engine.extract(temp_pdf)
-            return result_data["text"]
+            doc = fitz.open(temp_pdf)
+            try:
+                full_text = []
+                for page in doc:
+                    full_text.append(page.get_text())
+                return "\n\n".join(full_text)
+            finally:
+                doc.close()
 
         finally:
             if os.path.exists(temp_pdf):

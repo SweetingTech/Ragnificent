@@ -3,9 +3,6 @@ PDF extraction engine with OCR fallback support.
 Uses PyMuPDF for native text extraction and Tesseract for OCR.
 """
 import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
-import io
 from typing import Dict, Any, TypedDict, Optional
 from ..utils.logging import setup_logging
 from ..config.schema import GlobalConfig
@@ -142,10 +139,11 @@ class PdfEngine(Extractor):
                 ocr_text = self.ocr_engine.extract_text(img_data)
             except NotImplementedError:
                 # If injected engine doesn't support text from bytes (e.g. OCRmyPDF),
-                # fallback to basic Tesseract for this page
-                from .ocr_tesseract import TesseractEngine
-                fallback_engine = TesseractEngine()
-                ocr_text = fallback_engine.extract_text(img_data)
+                # fallback to a basic Tesseract engine, reused across pages
+                if not hasattr(self, "_fallback_ocr_engine"):
+                    from .ocr_tesseract import TesseractEngine
+                    self._fallback_ocr_engine = TesseractEngine()
+                ocr_text = self._fallback_ocr_engine.extract_text(img_data)
 
             logger.info(f"OCR extracted {len(ocr_text)} chars from page {page_num}")
             return ocr_text

@@ -76,7 +76,7 @@ class VectorService:
         self._collection_cache[collection_name] = exists
         return exists
 
-    def ensure_collection(self, corpus_id: str, vector_size: int, on_disk: bool = True, hnsw_on_disk: bool = True) -> None:
+    def ensure_collection(self, corpus_id: str, vector_size: int = DEFAULT_VECTOR_SIZE, on_disk: bool = True, hnsw_on_disk: bool = True) -> None:
         """
         Ensure a collection exists, creating it if necessary.
 
@@ -104,8 +104,6 @@ class VectorService:
                     error_msg = f"Dimension mismatch: embedding dimension is {vector_size}, but collection '{collection_name}' was created with {existing_size}."
                     logger.error(error_msg)
                     raise ValueError(error_msg)
-            except ValueError:
-                raise
             except Exception as e:
                 logger.warning(f"Could not verify existing collection dimensions for {collection_name}: {e}")
             return

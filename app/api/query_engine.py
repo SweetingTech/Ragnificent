@@ -10,7 +10,7 @@ import time
 from ..vector.qdrant_client import VectorService
 from ..providers.base import EmbeddingProvider, LLMProvider
 from ..providers.factory import get_llm_provider
-from ..providers.reranker import RerankProvider, get_rerank_provider
+from ..providers.reranker import RerankProvider
 from ..services.corpus_service import validate_corpus_id, CorpusValidationError
 from ..utils.logging import setup_logging
 from ..config.loader import load_config

@@ -4,7 +4,6 @@ Image extractor using OCR.
 from typing import Dict, Any, Optional
 from .base import Extractor, ExtractionResult
 from .ocr_base import OCREngine
-from .ocr_tesseract import TesseractEngine
 from ..config.schema import GlobalConfig
 
 
@@ -17,10 +16,15 @@ class ImageExtractor(Extractor):
 
         Args:
             config: Global configuration object
-            ocr_engine: Optional OCREngine to use. Defaults to TesseractEngine.
+            ocr_engine: Optional OCREngine to use. Defaults to TesseractEngine lazily.
         """
         self.config = config
-        self.ocr_engine = ocr_engine or TesseractEngine()
+
+        if ocr_engine is not None:
+            self.ocr_engine = ocr_engine
+        else:
+            from .ocr_tesseract import TesseractEngine
+            self.ocr_engine = TesseractEngine()
 
     def extract(self, file_path: str) -> ExtractionResult:
         """

@@ -80,7 +80,10 @@ class MarkdownChunker:
         return self._estimate_tokens(text)
 
     def _chunk_large_section(self, section: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Fallback to paragraph chunking for a single large section."""
+        """Fallback to paragraph chunking for a single large section.
+        Uses `self.min_tokens` to merge adjacent small chunks so that each
+        resulting chunk meets a minimum estimated token count.
+        """
         from .pdf_sections import PdfSectionChunker
         paragraph_chunker = PdfSectionChunker(
             max_tokens=self.max_tokens,
@@ -90,11 +93,34 @@ class MarkdownChunker:
         # We don't pass metadata here, we'll attach it later
         raw_chunks = paragraph_chunker.chunk(section["content"])
 
+        # Merge adjacent small chunks to respect the minimum token threshold.
+        merged_contents: List[str] = []
+        current_content_parts: List[str] = []
+
+        for rc in raw_chunks:
+            chunk_text = rc.get("content", "")
+            if not chunk_text:
+                continue
+
+            if not current_content_parts:
+                current_content_parts.append(chunk_text)
+                continue
+
+            tentative = "\n\n".join(current_content_parts + [chunk_text])
+            if self._estimate_tokens(tentative) < self.min_tokens:
+                current_content_parts.append(chunk_text)
+            else:
+                merged_contents.append("\n\n".join(current_content_parts))
+                current_content_parts = [chunk_text]
+
+        if current_content_parts:
+            merged_contents.append("\n\n".join(current_content_parts))
+
         return [{
             "title": section["title"],
             "level": section["level"],
-            "content": rc["content"]
-        } for rc in raw_chunks]
+            "content": content
+        } for content in merged_contents]
 
     def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """

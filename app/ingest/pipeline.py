@@ -79,7 +79,7 @@ class IngestionPipeline:
         # Thus, PdfEngine internally falls back to Tesseract for per-page OCR (implemented via a try-except in PdfEngine).
 
         self.pdf_engine = PdfEngine(config, ocr_engine=pdf_ocr_engine)
-        self.scanned_pdf_extractor = ScannedPdfExtractor(config, ocr_engine=pdf_ocr_engine if isinstance(pdf_ocr_engine, OCRmyPDFEngine) else None)
+        self.scanned_pdf_extractor = ScannedPdfExtractor(config, ocr_engine=pdf_ocr_engine)
         self.epub_extractor = EpubExtractor(config)
         self.image_extractor = ImageExtractor(config, ocr_engine=image_ocr_engine)
 
@@ -252,7 +252,7 @@ class IngestionPipeline:
                 if len(text.strip()) < self.config.ingest.ocr_trigger.get('min_chars_per_page', 200) * result['metadata'].get('page_count', 1) * 0.1:
                     # If less than 10% of expected text was extracted even after fallback
                     # OR if the user explicitly prefers OCRmyPDF for the whole document
-                    if isinstance(self.scanned_pdf_extractor.ocr_engine, type(None)) is False:
+                    if self.scanned_pdf_extractor.ocr_engine is not None:
                         try:
                             logger.info(f"PDF {file_path} appears to be fully scanned, routing to OCRmyPDF...")
                             result = self.scanned_pdf_extractor.extract(file_path)

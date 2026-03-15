@@ -90,18 +90,20 @@ def cmd_ingest_file(args):
         logger.error(f"Corpus {args.corpus} not found.")
         return
 
-    inbox_path = Path(corpus_metadata["inbox_path"])
+    # If source_path exists in config, we should drop it there for run_once to find it.
+    # Otherwise, fallback to inbox_path
+    target_path = Path(corpus_metadata.get("source_path") or corpus_metadata["inbox_path"])
     source_file = Path(args.file)
 
     if not source_file.exists():
         logger.error(f"Source file {source_file} does not exist.")
         return
 
-    # Create a unique filename in the inbox to prevent overwriting
+    # Create a unique filename in the target to prevent overwriting
     # We prefix with a short uuid to ensure uniqueness while keeping the original extension
     unique_id = str(uuid.uuid4())[:8]
     dest_name = f"{source_file.stem}_{unique_id}{source_file.suffix}"
-    dest_file = inbox_path / dest_name
+    dest_file = target_path / dest_name
 
     logger.info(f"Copying {source_file} to {dest_file}")
     shutil.copy2(source_file, dest_file)
