@@ -10,6 +10,7 @@ import time
 from ..vector.qdrant_client import VectorService
 from ..providers.base import EmbeddingProvider, LLMProvider
 from ..providers.factory import get_llm_provider
+from ..providers.reranker import RerankProvider
 from ..services.corpus_service import validate_corpus_id, CorpusValidationError
 from ..utils.logging import setup_logging
 from ..config.loader import load_config
@@ -38,7 +39,8 @@ class QueryEngine:
         embedder: EmbeddingProvider,
         default_llm: Optional[LLMProvider] = None,
         default_base_url: Optional[str] = None,
-        config: Optional[GlobalConfig] = None
+        config: Optional[GlobalConfig] = None,
+        reranker: Optional[RerankProvider] = None
     ):
         """
         Initialize the query engine.
@@ -54,6 +56,7 @@ class QueryEngine:
         self.embedder = embedder
         self.default_llm = default_llm
         self.config = config
+        self.reranker = reranker
 
         # Cache config if not provided
         if self.config is None:
@@ -162,13 +165,14 @@ class QueryEngine:
         if corpus_id:
             try:
                 query_vector = self.embedder.embed([query_text])[0]
-                hits = self.vector_service.search(corpus_id, query_vector, limit=top_k)
+                # If reranking is enabled, fetch more candidates initially
+                initial_k = top_k * 3 if self.reranker else top_k
+                hits = self.vector_service.search(corpus_id, query_vector, limit=initial_k)
             except Exception as e:
                 logger.error(f"Search failed: {e}")
 
-        # 2. Format hits and build context
+        # 2. Format hits
         formatted_hits = []
-        context_parts = []
         for hit in hits:
             formatted_hits.append({
                 "id": hit.id,
@@ -176,14 +180,28 @@ class QueryEngine:
                 "payload": hit.payload
             })
 
-            meta = hit.payload
+        # Apply reranking if configured
+        if self.reranker and formatted_hits:
+            try:
+                formatted_hits = self.reranker.rerank(query_text, formatted_hits, top_n=top_k)
+            except Exception as e:
+                logger.error(f"Reranking failed: {e}")
+                # Fallback to taking top_k if reranking fails
+                formatted_hits = formatted_hits[:top_k]
+        else:
+            formatted_hits = formatted_hits[:top_k]
+
+        # 3. Build context
+        context_parts = []
+        for hit in formatted_hits:
+            meta = hit.get('payload', {})
             file_name = meta.get('file_name', 'unknown')
             page = meta.get('page', meta.get('chunk_index', '?'))
             source = f"File: {file_name} (Section {page})"
             text = meta.get('text', '')
             context_parts.append(f"[{source}]:\n{text}")
 
-        # 3. Resolve LLM provider
+        # 4. Resolve LLM provider
         llm = None
         if llm_model:
             # Ad-hoc model override

@@ -36,17 +36,19 @@ class OllamaProvider(EmbeddingProvider):
         Returns:
             List of embedding vectors (list of floats)
         """
-        results = []
-        for text in texts:
-            # Clean newlines to avoid issues with some models
-            clean_text = text.replace("\n", " ")
-            try:
-                resp = self._client.embeddings(model=self.model, prompt=clean_text)
-                results.append(resp['embedding'])
-            except Exception as e:
-                logger.error(f"Embedding failed for text chunk: {e}")
-                raise
-        return results
+        if not texts:
+            return []
+
+        # Clean newlines to avoid issues with some models
+        clean_texts = [text.replace("\n", " ") for text in texts]
+
+        try:
+            # Ollama's embed endpoint accepts an array of strings
+            resp = self._client.embed(model=self.model, input=clean_texts)
+            return resp.embeddings
+        except Exception as e:
+            logger.error(f"Batch embedding failed: {e}")
+            raise
 
 
 class OllamaLLM(LLMProvider):

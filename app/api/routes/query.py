@@ -14,6 +14,7 @@ from ...config.schema import GlobalConfig
 from ...vector.qdrant_client import VectorService
 from ...providers.factory import get_embedding_provider, get_llm_provider
 from ...providers.base import EmbeddingProvider, LLMProvider
+from ...providers.reranker import RerankProvider, get_rerank_provider
 from ..query_engine import QueryEngine
 from ...utils.logging import setup_logging
 
@@ -87,12 +88,28 @@ def get_default_llm() -> Optional[LLMProvider]:
         return None
 
 
+def get_reranker() -> Optional[RerankProvider]:
+    """Get reranker instance if enabled."""
+    config = get_config()
+    try:
+        if config.models.rerank and config.models.rerank.enabled:
+            return get_rerank_provider(
+                name=config.models.rerank.provider,
+                base_url=config.models.rerank.base_url,
+                model=config.models.rerank.model
+            )
+    except Exception as e:
+        logger.warning(f"Failed to initialize reranker: {e}")
+    return None
+
+
 def get_query_engine() -> QueryEngine:
     """Get query engine instance."""
     return QueryEngine(
         vector_service=get_vector_service(),
         embedder=get_embedder(),
-        default_llm=get_default_llm()
+        default_llm=get_default_llm(),
+        reranker=get_reranker()
     )
 
 

@@ -38,8 +38,11 @@ graph TD
 
 - **Local-first**: Designed for on-prem usage.
 - **Idempotent Ingestion**: Skips duplicates, handles incremental updates.
-- **Lane-based Extraction**: Native PDF or OCR (Tesseract/OCRmyPDF).
-- **Persistent State**: SQLite tracking of every file and chunk.
+- **Lane-based Extraction**: Intelligent routing for PDF, EPUB, PNG, JPG, and TIFF files.
+- **OCR Fallback**: PDF extraction falls back to OCR if text is sparse. Uses Tesseract for images and OCRmyPDF for scanned PDFs.
+- **Markdown-aware Chunking**: Splits text logically by headings and merges small sections while preserving page and source metadata.
+- **Discord / OpenClaw Integration**: Dedicated command line utility to ingest downloaded files directly into a corpus.
+- **Vector Storage Optimization**: Configurable embedding dimensions and on-disk Qdrant storage.
 
 ## Requirements
 
@@ -144,6 +147,13 @@ python -m app.cli init-db
 # Start the server
 python -m app.cli serve
 
-# Run ingestion for a corpus
+# Run regular ingestion loop for a corpus
 python -m app.cli ingest --corpus <corpus_id>
+
+# Ingest a specific downloaded file directly into a corpus (e.g., from Discord/OpenClaw)
+python -m app.cli ingest-file /path/to/downloaded/file.pdf --corpus <corpus_id>
 ```
+
+## Migration Notes
+
+**Vector Dimensions:** The default vector size is now inferred dynamically or read from `config.yaml` (`vector_db.vector_size`). If you see dimension mismatch errors in existing corpora, you may need to recreate your Qdrant collection or explicitly set `vector_size` in your configuration to match your original embedding size. On-disk storage (`on_disk`, `hnsw_on_disk`) is also now enabled by default.

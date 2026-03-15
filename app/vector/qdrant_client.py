@@ -76,27 +76,49 @@ class VectorService:
         self._collection_cache[collection_name] = exists
         return exists
 
-    def ensure_collection(self, corpus_id: str, vector_size: int = DEFAULT_VECTOR_SIZE) -> None:
+    def ensure_collection(self, corpus_id: str, vector_size: int = DEFAULT_VECTOR_SIZE, on_disk: bool = True, hnsw_on_disk: bool = True) -> None:
         """
         Ensure a collection exists, creating it if necessary.
 
         Args:
             corpus_id: The corpus identifier
             vector_size: Dimension of the vectors to store
+            on_disk: Whether to store vectors on disk
+            hnsw_on_disk: Whether to store HNSW index on disk
         """
         collection_name = self._get_collection_name(corpus_id)
 
         if self.collection_exists(corpus_id):
-            logger.debug(f"Collection {collection_name} already exists")
+            logger.debug(f"Collection {collection_name} already exists, verifying dimensions...")
+            # Verify the existing dimension matches the requested one
+            try:
+                info = self.client.get_collection(collection_name=collection_name)
+                # handle both Single vector config and Multiple vectors config scenarios
+                existing_size = None
+                if isinstance(info.config.params.vectors, models.VectorParams):
+                    existing_size = info.config.params.vectors.size
+                elif isinstance(info.config.params.vectors, dict) and "" in info.config.params.vectors:
+                    existing_size = info.config.params.vectors[""].size
+
+                if existing_size and existing_size != vector_size:
+                    error_msg = f"Dimension mismatch: embedding dimension is {vector_size}, but collection '{collection_name}' was created with {existing_size}."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            except Exception as e:
+                logger.warning(f"Could not verify existing collection dimensions for {collection_name}: {e}")
             return
 
         try:
-            logger.info(f"Creating collection {collection_name}")
+            logger.info(f"Creating collection {collection_name} with vector size {vector_size}")
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config=models.VectorParams(
                     size=vector_size,
-                    distance=models.Distance.COSINE
+                    distance=models.Distance.COSINE,
+                    on_disk=on_disk
+                ),
+                hnsw_config=models.HnswConfigDiff(
+                    on_disk=hnsw_on_disk
                 )
             )
             # Update cache
@@ -105,13 +127,16 @@ class VectorService:
             logger.error(f"Failed to create collection {collection_name}: {e}")
             raise
 
-    def upsert_chunks(self, corpus_id: str, chunks: List[Dict]) -> None:
+    def upsert_chunks(self, corpus_id: str, chunks: List[Dict], vector_size: int, on_disk: bool = True, hnsw_on_disk: bool = True) -> None:
         """
         Upsert document chunks to the vector database.
 
         Args:
             corpus_id: The corpus identifier
             chunks: List of chunk dictionaries with 'id', 'vector', 'payload' keys
+            vector_size: Dimension of the vectors
+            on_disk: Whether to store vectors on disk if creating collection
+            hnsw_on_disk: Whether to store HNSW index on disk if creating collection
         """
         if not chunks:
             logger.warning(f"No chunks to upsert for corpus {corpus_id}")
@@ -120,7 +145,7 @@ class VectorService:
         collection_name = self._get_collection_name(corpus_id)
 
         # Ensure collection exists before upserting
-        self.ensure_collection(corpus_id)
+        self.ensure_collection(corpus_id, vector_size, on_disk, hnsw_on_disk)
 
         points = [
             models.PointStruct(
