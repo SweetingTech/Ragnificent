@@ -1,13 +1,46 @@
-# RAG Librarian (Custodian)
+# RAGnificent
 
-A local-first "Librarian" service that ingests documents from themed folders (corpora), deduplicates them by content hash, extracts text, chunks intelligently, embeds, and stores everything in a persistent vector index (Qdrant) for retrieval with citations. Includes a web GUI for search, corpus management, and system monitoring.
+<div align="center">
 
-## Architecture & Dataflow
+**Built in an afternoon because every other local RAG setup was either
+too simple to be useful or too complex to actually run.**
+
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB)](https://www.python.org/)
+[![Qdrant](https://img.shields.io/badge/Qdrant-vector%20store-DC244C)](https://qdrant.tech/)
+[![Ollama](https://img.shields.io/badge/Ollama-local%20inference-000000)](https://ollama.com/)
+
+</div>
+
+RAGnificent is a local-first document intelligence service. Drop files
+into a folder, trigger a sync, and get a persistent queryable vector
+index back — with streaming LLM answers and citations. Each corpus
+gets its own isolated Qdrant collection, its own chunking strategy,
+and its own LLM config. No shared state between document sets. No
+external API calls required.
+
+---
+
+## What Makes This Different
+
+| | Typical local RAG | RAGnificent |
+|---|---|---|
+| **Corpus isolation** | Shared index | Per-corpus Qdrant collection |
+| **Chunking** | One fixed strategy | Markdown / PDF / Code-aware routing |
+| **PDF handling** | Text extraction only | OCR fallback per-page when text is sparse |
+| **Deduplication** | None | SHA-256 content hash, idempotent ingest |
+| **Config** | Global only | Per-corpus `corpus.yaml` overrides |
+| **Interface** | CLI or nothing | Web GUI + REST API + CLI |
+| **Deployment** | Script or nothing | Docker Compose or bare Python |
+
+---
+
+## Architecture
 
 ```mermaid
 graph TD
     subgraph User Interaction
-    A[User/Agent] -->|1. Creates Librarian| B(GUI/API)
+    A[User/Agent] -->|1. Creates Corpus| B(GUI/API)
     A -->|2. Drops Files| C(Source Folder)
     A -->|5. Queries| B
     end
@@ -42,180 +75,122 @@ graph TD
     end
 ```
 
+---
+
 ## Features
 
-- **Local-first**: Designed for on-prem usage with no external API calls required.
-- **Web GUI**: Interactive dashboard, RAG search interface, and corpus management pages (HTMX-powered).
-- **LLM-powered Answers**: Queries return both vector search hits and streamed LLM-generated answers with citations.
-- **Idempotent Ingestion**: SHA-256 hash-based deduplication; skips already-processed files and handles incremental updates.
-- **Lane-based Extraction**: Intelligent routing for PDF, EPUB, PNG, JPG, JPEG, and TIFF files.
-- **OCR Fallback**: PDF extraction falls back to OCR per-page if text is sparse (configurable density threshold). Supports multiple OCR backends: Tesseract, OCRmyPDF, and PaddleOCR.
-- **Multiple Chunking Strategies**:
-  - **Markdown**: Header-aware splitting that merges small sections while preserving structure.
-  - **PDF Sections**: Paragraph-based chunking with configurable overlap for context preservation.
-  - **Code Symbols**: Python function/class-aware chunking.
-- **Per-Corpus Configuration**: Each corpus can define its own chunking strategy, LLM model, and settings via `corpus.yaml`.
-- **Discord / OpenClaw Integration**: Dedicated CLI command to ingest downloaded files directly into a corpus.
-- **Vector Storage Optimization**: Configurable embedding dimensions, on-disk Qdrant storage, and collection caching.
-- **Streaming Responses**: LLM answers stream to the browser in real time.
-- **Reranking Support**: Optional post-retrieval reranking stage (pluggable).
+### Ingestion
+- SHA-256 hash deduplication — skips already-processed files, handles incremental updates
+- Lane-based extraction routing: PyMuPDF for native PDFs, OCRmyPDF for scanned PDFs, Tesseract/PaddleOCR for images, dedicated EPUB extractor, text/code loader
+- OCR fallback per-page when text density falls below a configurable threshold
+- Three chunking strategies: Markdown header-aware, PDF paragraph-based with overlap, Python function/class symbol-aware
 
-## Requirements
+### Per-Corpus Isolation
+- Each corpus gets its own Qdrant collection — no cross-contamination between document sets
+- Per-corpus `corpus.yaml` overrides chunking strategy, LLM model, and embedding settings
+- Corpus-specific inbox folder; drop files and trigger sync
 
-- Python 3.11+
-- [Ollama](https://ollama.com/) (for embeddings and LLM inference)
-- Qdrant (via Docker recommended)
-- Optional: Tesseract OCR, Ghostscript, OCRmyPDF, PaddleOCR (for OCR features)
+### Retrieval
+- Vector similarity search with streaming LLM-generated answers
+- Source citations returned with every response
+- Optional post-retrieval reranking stage (pluggable)
+- Configurable `top_k`, model selection per query
+
+### Interface
+- Web GUI: dashboard, RAG search, corpus management, corpus creation
+- REST API: health, query, ingest trigger endpoints
+- CLI: `init-db`, `serve`, `ingest`, `ingest-file` commands
+
+### Engineering
+- Thread-safe SQLite with WAL mode and thread-local connections
+- Async non-blocking I/O — blocking operations run via `asyncio.to_thread()`
+- FastAPI dependency injection throughout — no module-level globals
+- O(1) Qdrant collection existence checks with caching
+- Path traversal protection: corpus IDs validated against strict regex with path resolution verification
+- YAML sanitization: user inputs sanitized via `yaml.safe_dump()` before writes
+
+---
 
 ## Quickstart
 
-### 1. Setup
+### Option 1 — Docker (recommended)
 
-Run the setup script to create folders and install dependencies:
-
-**Windows (PowerShell):**
-```powershell
-./scripts/windows/setup.ps1
+```bash
+cp .env.example .env
+docker-compose up -d
+# Service: http://localhost:8008
 ```
+
+### Option 2 — Bare Python
 
 **Linux/macOS:**
 ```bash
 ./scripts/linux/setup.sh
-```
-
-### 2. Configure
-
-Copy `.env.example` to `.env` and edit as needed:
-
-```bash
 cp .env.example .env
-```
-
-Key settings in `.env`:
-- `API_PORT` - Server port (default: 8008)
-- `QDRANT_URL` - Qdrant connection URL
-- `EMBED_PROVIDER` / `EMBED_MODEL` - Embedding provider and model name
-- `LIBRARY_ROOT` - Root directory for corpora and data
-
-Edit `config.yaml` for detailed system configuration (extraction, OCR, chunking defaults, vector DB settings).
-
-Edit `rag_library/corpora/*/corpus.yaml` for corpus-specific settings (chunking strategy, LLM model overrides).
-
-### 3. Start Infrastructure
-
-Start Qdrant using Docker:
-
-```bash
-docker-compose up -d qdrant
-```
-
-### 4. Initialize Database
-
-**Windows (PowerShell):**
-```powershell
-./scripts/windows/init_state_db.ps1
-```
-
-**Linux/macOS:**
-```bash
 ./scripts/linux/init_state_db.sh
-```
-
-### 5. Run the Service
-
-**Windows (PowerShell):**
-```powershell
-./scripts/windows/run.ps1
-```
-
-**Linux/macOS:**
-```bash
 ./scripts/linux/run.sh
 ```
 
-The service will be available at `http://localhost:8008`.
-
-### Full Docker Deployment
-
-To run both Qdrant and the Librarian service together:
-
-```bash
-docker-compose up -d
+**Windows (PowerShell):**
+```powershell
+./scripts/windows/setup.ps1
+cp .env.example .env
+./scripts/windows/init_state_db.ps1
+./scripts/windows/run.ps1
 ```
 
-This starts both services with persistent volumes for the library and state data.
+---
 
-## Web GUI
+## Usage
 
-The built-in web interface is available at `http://localhost:8008/gui/` and includes:
+1. Open `http://localhost:8008/gui/create-corpus` and create a corpus
+2. Drop files into `rag_library/corpora/<corpus_id>/inbox/`
+3. Trigger ingestion via the GUI, API, or CLI
+4. Query at `/gui/search` — select a corpus, ask a question, get a streamed answer with citations
 
-- **Dashboard** (`/gui/dashboard`) - System health overview, corpus cards with document/chunk counts, vector statistics.
-- **Search** (`/gui/search`) - Interactive RAG chat interface. Select a corpus, ask questions, and get LLM-generated answers with source citations.
-- **Corpora** (`/gui/corpora`) - List and manage all corpora.
-- **Manage Corpus** (`/gui/manage-corpus/<id>`) - Configure corpus-specific settings.
-- **Create Corpus** (`/gui/create-corpus`) - Create a new corpus with its own inbox folder and configuration.
+```bash
+# CLI usage
+python -m app.cli ingest --corpus <corpus_id>
+python -m app.cli ingest-file /path/to/file.pdf --corpus <corpus_id>
+```
 
-## API Endpoints
+---
+
+## API
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `POST` | `/api/query` | Execute a RAG query (JSON body: `query`, `corpus_id`, `top_k`, `llm_model`) |
+| `POST` | `/api/query` | RAG query (`query`, `corpus_id`, `top_k`, `llm_model`) |
 | `GET` | `/api/query/models` | List available LLM models |
-| `POST` | `/api/ingest/run` | Trigger ingestion (optional `corpus_id` query param) |
-| `GET` | `/gui/*` | Web GUI pages (dashboard, search, corpora, manage, create) |
+| `POST` | `/api/ingest/run` | Trigger ingestion (optional `corpus_id`) |
+| `GET` | `/gui/*` | Web GUI pages |
 
-## Folder Structure
+---
 
-```
-app/                    # Application source code
-  api/                  #   REST API routes (health, query, ingest)
-  gui/                  #   Web GUI (templates, static assets, routes)
-  ingest/               #   Ingestion pipeline and chunkers
-  engines/              #   Text extractors (PDF, EPUB, image, OCR)
-  vector/               #   Qdrant vector DB client
-  state/                #   SQLite state database and schema
-  providers/            #   Embedding/LLM providers (Ollama)
-  services/             #   Corpus service
-  config/               #   Configuration loading and schemas
-  utils/                #   Logging, hashing utilities
-  cli.py                #   CLI entry point
-rag_library/            # Default data directory
-  corpora/              #   Document corpora (each with inbox/ and corpus.yaml)
-  state/                #   SQLite database
-  cache/                #   OCR cache
-scripts/                # Setup and run scripts
-  linux/                #   Bash scripts (setup, init_state_db, run)
-  windows/              #   PowerShell scripts (setup, init_state_db, run)
-tests/                  # Pytest integration tests
-config.yaml             # Global system configuration
-.env.example            # Environment variable template
-Dockerfile              # Container image definition
-docker-compose.yml      # Qdrant + Librarian service orchestration
-pyproject.toml          # Python package definition (Poetry)
-```
+## Configuration
 
-## Usage
+`.env` key settings:
 
-1. Drop files into `rag_library/corpora/<corpus_id>/inbox`.
-2. Trigger ingestion via the API (`POST /api/ingest/run`), the CLI (`python -m app.cli ingest --corpus <id>`), or the web GUI.
-3. Query via the search GUI at `/gui/search` or the API at `POST /api/query`.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_PORT` | `8008` | Server port |
+| `QDRANT_URL` | — | Qdrant connection URL |
+| `EMBED_PROVIDER` / `EMBED_MODEL` | — | Embedding provider and model |
+| `LIBRARY_ROOT` | `rag_library` | Root directory for corpora and data |
 
-## CLI Commands
+Per-corpus — edit `rag_library/corpora/<id>/corpus.yaml` to override chunking strategy, LLM model, and vector settings for that corpus specifically.
 
-```bash
-# Initialize the database
-python -m app.cli init-db
+---
 
-# Start the server
-python -m app.cli serve
+## Requirements
 
-# Run ingestion for a corpus
-python -m app.cli ingest --corpus <corpus_id>
+- Python 3.11+
+- [Ollama](https://ollama.com/) for embeddings and LLM inference
+- Qdrant (Docker recommended)
+- Optional: Tesseract, Ghostscript, OCRmyPDF, PaddleOCR for OCR
 
-# Ingest a specific downloaded file directly into a corpus (e.g., from Discord/OpenClaw)
-python -m app.cli ingest-file /path/to/downloaded/file.pdf --corpus <corpus_id>
-```
+---
 
 ## Testing
 
@@ -223,28 +198,28 @@ python -m app.cli ingest-file /path/to/downloaded/file.pdf --corpus <corpus_id>
 pytest tests/
 ```
 
-## Code Quality & Security
+Tests run against in-memory SQLite and temporary directories — no running Qdrant or Ollama instance required.
 
-The codebase has undergone a comprehensive code review with 33 issues addressed:
+---
 
-### Security Improvements
-- **Path Traversal Protection**: All corpus IDs are validated against strict regex patterns with path resolution verification
-- **Environment Variable Safety**: Removed global `os.environ` mutations; providers use explicit configuration
-- **YAML Sanitization**: User inputs are sanitized before writing to YAML files using `yaml.safe_dump()`
+## Stack
 
-### Architecture Improvements
-- **Thread-Safe Database**: SQLite connections use thread-local storage with WAL mode for concurrent access
-- **Dependency Injection**: FastAPI routes use proper `Depends()` pattern instead of module-level globals
-- **Async Non-Blocking I/O**: Blocking operations run via `asyncio.to_thread()` to avoid event loop blocking
-- **Centralized Services**: `CorpusService` provides single source of truth for corpus operations
+- **Extraction** — PyMuPDF, OCRmyPDF, Tesseract, PaddleOCR, EPUB extractor
+- **Vector store** — Qdrant (on-disk, per-corpus collections)
+- **Embeddings / LLM** — Ollama (local, no external API calls)
+- **State** — SQLite with WAL mode
+- **API** — FastAPI with HTMX-powered web GUI
+- **Deployment** — Docker Compose or bare Python
 
-### Resource Management
-- **Database Lifecycle**: All database connections properly closed via generators with cleanup
-- **PDF Handling**: Proper `try/finally` blocks ensure file handles are released
-- **Collection Caching**: Qdrant collection existence checks use O(1) lookups with caching
+---
 
-See `20260129_Changelog.md` for the complete list of changes.
+## Author
 
-## Migration Notes
+Douglas J. Sweeting II
+Glen Burnie, MD · 443-763-7955 · douglas.j.sweeting@gmail.com · [github.com/SweetingTech](https://github.com/SweetingTech)
 
-**Vector Dimensions:** The default vector size is now inferred dynamically or read from `config.yaml` (`vector_db.vector_size`). If you see dimension mismatch errors in existing corpora, you may need to recreate your Qdrant collection or explicitly set `vector_size` in your configuration to match your original embedding size. On-disk storage (`on_disk`, `hnsw_on_disk`) is also now enabled by default.
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
