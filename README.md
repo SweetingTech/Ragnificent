@@ -143,28 +143,92 @@ cp .env.example .env
 
 ## Usage
 
-1. Open `http://localhost:8008/gui/create-corpus` and create a corpus
-2. Drop files into `rag_library/corpora/<corpus_id>/inbox/`
-3. Trigger ingestion via the GUI, API, or CLI
+### Via the Web GUI
+
+1. Open `http://localhost:8008/gui/create-corpus`
+2. Give the corpus an ID and point `source_path` at **any folder on the machine** (e.g. `D:/documents/research`). The vector database always stays inside `rag_library/` — only the *source* of documents is external.
+3. Trigger ingestion via the GUI or the API
 4. Query at `/gui/search` — select a corpus, ask a question, get a streamed answer with citations
 
+### Via the API (for agents or scripts)
+
 ```bash
-# CLI usage
+# Create a corpus pointed at any local folder
+curl -X POST http://localhost:8008/api/corpora \
+  -H "Content-Type: application/json" \
+  -d '{"corpus_id":"my_docs","description":"My documents","source_path":"D:/documents/research"}'
+
+# Trigger ingestion
+curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs"
+
+# Query the database
+curl -X POST http://localhost:8008/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is the main finding?","corpus_id":"my_docs","top_k":5}'
+```
+
+### Via the CLI
+
+```bash
 python -m app.cli ingest --corpus <corpus_id>
 python -m app.cli ingest-file /path/to/file.pdf --corpus <corpus_id>
 ```
+
+### Source path vs. inbox
+
+Each corpus has two document locations:
+
+| Path | Purpose |
+|---|---|
+| `source_path` | Any folder you point to — RAGnificent scans this for documents |
+| `rag_library/corpora/<id>/inbox/` | Drop zone inside the library — also scanned during ingestion |
+
+Both are scanned on every ingestion run. The RAG vector database always lives in `rag_library/` regardless of where the source documents are.
 
 ---
 
 ## API
 
+CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your local network — including AI agents — can call the API without browser restrictions.
+
+### Corpus / Database Management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/corpora` | List all RAG databases with vector counts and query endpoint |
+| `GET` | `/api/corpora/{corpus_id}` | Full detail for one corpus (config, vector count, paths) |
+| `POST` | `/api/corpora` | Create a new corpus pointed at any local folder |
+
+### Query
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/query` | RAG query — `query`, `corpus_id`, `top_k`, `llm_model` |
+| `GET` | `/api/query/models` | List available Ollama models |
+
+### Ingestion
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/ingest/run` | Trigger ingestion (`?corpus_id=<id>` or all) |
+| `GET` | `/api/ingest/status` | Current ingestion status |
+
+### Other
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `POST` | `/api/query` | RAG query (`query`, `corpus_id`, `top_k`, `llm_model`) |
-| `GET` | `/api/query/models` | List available LLM models |
-| `POST` | `/api/ingest/run` | Trigger ingestion (optional `corpus_id`) |
 | `GET` | `/gui/*` | Web GUI pages |
+
+### Connecting an AI agent
+
+See [`docs/agent-integration.md`](docs/agent-integration.md) for the full agent workflow with request/response examples. The short version:
+
+```
+1. GET  /api/corpora          → discover databases, pick corpus_id
+2. POST /api/ingest/run       → index documents if vector_count is 0
+3. POST /api/query            → { "query": "...", "corpus_id": "..." }
+```
 
 ---
 
