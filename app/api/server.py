@@ -1,15 +1,35 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import os
 from fastapi.staticfiles import StaticFiles
 from .routes import health, query, ingest, corpora
 from ..gui import routes as gui_routes
+from ..utils.logging import setup_logging
+
+logger = setup_logging()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Auto-initialize the state database on startup (idempotent)."""
+    try:
+        from ..config.loader import load_config
+        from ..state.db import Database
+        config = load_config()
+        db_path = config.get_state_db_path()
+        db = Database(db_path)
+        schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state", "schema.sql")
+        db.init_db(schema_path)
+        db.close()
+        logger.info("State database ready.")
+    except Exception as e:
+        logger.warning(f"Could not auto-initialize state database: {e}")
+    yield
+
 
 def create_app():
-    # Load config on startup
-    # config = load_config() # can be injected or loaded here
-
-    app = FastAPI(title="Ragnificent", version="0.1.0")
+    app = FastAPI(title="Ragnificent", version="0.1.0", lifespan=lifespan)
 
     # CORS — allow all origins on the local network
     app.add_middleware(

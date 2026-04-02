@@ -85,12 +85,33 @@ chunking:
 
 ## 4. API Specification
 
+### Corpus / Database Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/corpora` | List all RAG databases (corpus_id, description, vector_count, query_endpoint). |
+| `GET` | `/api/corpora/{corpus_id}` | Full detail for one corpus including corpus.yaml config. |
+| `POST` | `/api/corpora` | Create a new corpus pointed at any local folder. |
+
+### Query
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/query` | JSON Search API (returns hits + LLM answer). |
+| `GET` | `/api/query/models` | List Ollama models available on this host. |
+
+### Ingestion
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/ingest/run` | Trigger ingestion for a corpus (sync). |
-| `POST` | `/api/query` | JSON Search API (returns hits + answer). |
+| `GET` | `/api/ingest/status` | Current ingestion status. |
+
+### System
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Service health check. |
 | `GET` | `/gui/dashboard` | System health and corpus cards. |
 | `GET` | `/gui/search` | Interactive Chat/RAG interface. |
+
+CORS is fully open (`Access-Control-Allow-Origin: *`) for local network agent access. See `docs/agent-integration.md` for the full agent workflow.
 
 ---
 
@@ -228,6 +249,17 @@ A comprehensive code review identified and addressed 33 issues across security, 
 - [x] Documented in `20260129_Changelog.md`
 
 ---
+
+## Phase 9.7: Agent API & Out-of-Box Fixes (Completed)
+### Tasks
+- [x] Add CORS middleware (`Access-Control-Allow-Origin: *`) for LAN agent access
+- [x] Add `GET /api/corpora` — agent-facing corpus discovery endpoint
+- [x] Add `GET /api/corpora/{corpus_id}` — full corpus detail including config
+- [x] Add `POST /api/corpora` — create corpus via API (source_path points at any local folder)
+- [x] Add `GET /api/query/models` — list available Ollama models (was documented but never implemented)
+- [x] Add lifespan DB auto-init — state database initialized on server startup (no manual `init-db` step required)
+- [x] Fix `config.yaml` absolute paths — replaced hardcoded `d:/github/Ragnificent/...` with relative `rag_library/...` for portability
+- [x] Add `docs/agent-integration.md` — step-by-step agent integration guide
 
 ## Phase 10: Dockerization + Multi-instance (Pending)
 ### Tasks

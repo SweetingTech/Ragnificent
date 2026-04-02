@@ -14,6 +14,7 @@ from ...config.schema import GlobalConfig
 from ...vector.qdrant_client import VectorService
 from ...providers.factory import get_embedding_provider, get_llm_provider
 from ...providers.base import EmbeddingProvider, LLMProvider
+from ...providers.ollama import OllamaLLM
 from ...providers.reranker import RerankProvider, get_rerank_provider
 from ..query_engine import QueryEngine
 from ...utils.logging import setup_logging
@@ -111,6 +112,19 @@ def get_query_engine() -> QueryEngine:
         default_llm=get_default_llm(),
         reranker=get_reranker()
     )
+
+
+@router.get("/query/models")
+async def list_models():
+    """
+    List available Ollama models on this host.
+
+    Returns the models that can be passed as `llm_model` in POST /api/query.
+    Falls back to a default list if Ollama is unreachable.
+    """
+    config = get_config()
+    models = OllamaLLM.list_models(base_url=config.models.embeddings.base_url)
+    return {"models": models or ["llama3", "mistral"]}
 
 
 @router.post("/query", response_model=QueryResponse)

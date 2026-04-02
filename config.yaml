@@ -1,9 +1,9 @@
-library_root: "d:/github/Ragnificent/rag_library"
+library_root: "rag_library"
 
 ingest:
   poll_interval_seconds: 300
   max_parallel_files: 1
-  lock_file: "d:/github/Ragnificent/rag_library/.locks/ingest.lock"
+  lock_file: "rag_library/.locks/ingest.lock"
   ocr_trigger:
     min_chars_per_page: 200
     min_dictionary_word_ratio: 0.35
@@ -21,7 +21,7 @@ ocr:
     deskew: true
     rotate_pages: true
     clean: true
-    cache_dir: "d:/github/Ragnificent/rag_library/cache/ocr"
+    cache_dir: "rag_library/cache/ocr"
 
 models:
   embeddings:
