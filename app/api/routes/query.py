@@ -119,12 +119,24 @@ async def list_models():
     """
     List available Ollama models on this host.
 
-    Returns the models that can be passed as `llm_model` in POST /api/query.
-    Falls back to a default list if Ollama is unreachable.
+    Uses the answer model base_url when configured; falls back to the
+    embeddings base_url. Returns an empty list with a warning field when
+    Ollama is unreachable so callers are not misled by phantom defaults.
     """
     config = get_config()
-    models = OllamaLLM.list_models(base_url=config.models.embeddings.base_url)
-    return {"models": models or ["llama3", "mistral"]}
+    base_url = (
+        config.models.answer.base_url
+        if getattr(config.models, "answer", None)
+        else config.models.embeddings.base_url
+    )
+    try:
+        models = OllamaLLM.list_models(base_url=base_url)
+    except Exception:
+        logger.exception("Failed to list Ollama models")
+        return {"models": [], "warning": "Ollama server could not be reached; no models available."}
+    if not models:
+        return {"models": [], "warning": "No Ollama models reported as available."}
+    return {"models": models}
 
 
 @router.post("/query", response_model=QueryResponse)

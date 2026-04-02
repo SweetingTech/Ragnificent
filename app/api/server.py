@@ -20,11 +20,13 @@ async def lifespan(app: FastAPI):
         db_path = config.get_state_db_path()
         db = Database(db_path)
         schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state", "schema.sql")
-        db.init_db(schema_path)
-        db.close()
-        logger.info("State database ready.")
-    except Exception as e:
-        logger.warning(f"Could not auto-initialize state database: {e}")
+        try:
+            db.init_db(schema_path)
+            logger.info("State database ready.")
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Could not auto-initialize state database")
     yield
 
 

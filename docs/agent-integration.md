@@ -31,21 +31,28 @@ GET /api/corpora
   {
     "corpus_id": "cyber_blue",
     "description": "Cybersecurity knowledge base",
-    "source_path": "D:/documents/cybersecurity",
-    "inbox_path": "D:/github/Ragnificent/rag_library/corpora/cyber_blue/inbox",
     "vector_count": 4821,
     "query_endpoint": "/api/query"
   },
   {
     "corpus_id": "dm_green",
     "description": "Dungeon Master resources",
-    "source_path": "D:/documents/dnd",
-    "inbox_path": "D:/github/Ragnificent/rag_library/corpora/dm_green/inbox",
     "vector_count": 1103,
     "query_endpoint": "/api/query"
   }
 ]
 ```
+
+**Fields returned:**
+
+| Field | Description |
+|---|---|
+| `corpus_id` | Pass this as `corpus_id` in `POST /api/query` |
+| `description` | Human-readable label for the corpus |
+| `vector_count` | Chunks indexed (0 = not yet ingested, do not query) |
+| `query_endpoint` | The path to POST queries to |
+
+> Note: Filesystem paths (`source_path`, `inbox_path`) are not returned by the list or detail endpoints to avoid exposing local directory structure over the network.
 
 **Decision logic for agents:**
 - If `vector_count` is `0`, the corpus has no indexed content yet — do not query it.

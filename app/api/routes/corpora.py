@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
+import os
+import shutil
 
 from ...config.loader import load_config
 from ...config.schema import GlobalConfig
@@ -20,11 +22,13 @@ router = APIRouter(prefix="/corpora", tags=["corpora"])
 
 
 class CorpusSummary(BaseModel):
-    """Summary of a single RAG corpus, suitable for agent discovery."""
+    """Summary of a single RAG corpus, suitable for agent discovery.
+
+    Absolute filesystem paths are intentionally omitted to avoid leaking
+    local directory structure to unauthenticated callers over the network.
+    """
     corpus_id: str
     description: str
-    source_path: Optional[str] = None
-    inbox_path: str
     vector_count: int
     query_endpoint: str
 
@@ -65,15 +69,13 @@ def get_vector_service() -> VectorService:
     return VectorService(config.vector_db.url, config.vector_db.collection_prefix)
 
 
-def _build_summary(corpus_meta: Dict, vector_service: VectorService, base_url: str = "") -> CorpusSummary:
+def _build_summary(corpus_meta: Dict, vector_service: VectorService) -> CorpusSummary:
     corpus_id = corpus_meta["corpus_id"]
     return CorpusSummary(
         corpus_id=corpus_id,
         description=corpus_meta.get("description", ""),
-        source_path=corpus_meta.get("source_path"),
-        inbox_path=corpus_meta.get("inbox_path", ""),
         vector_count=vector_service.get_count(corpus_id),
-        query_endpoint=f"{base_url}/api/query",
+        query_endpoint="/api/query",
     )
 
 
@@ -99,6 +101,8 @@ async def list_corpora(
     return [_build_summary(m, vector_service) for m in all_meta]
 
 
+
+
 @router.get("/{corpus_id}", response_model=CorpusDetail)
 async def get_corpus(
     corpus_id: str,
@@ -122,6 +126,7 @@ async def get_corpus(
 
     summary = _build_summary(meta, vector_service)
     return CorpusDetail(**summary.model_dump(), config=meta.get("config", {}))
+
 
 
 @router.post("", response_model=CreateCorpusResponse, status_code=201)
@@ -154,22 +159,38 @@ async def create_corpus(
             detail=f"Corpus '{body.corpus_id}' already exists"
         )
 
-    if not body.source_path or not body.source_path.strip():
+    source_path = body.source_path.strip() if body.source_path else ""
+    if not source_path:
         raise HTTPException(status_code=400, detail="source_path is required")
+    if not os.path.isdir(source_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"source_path does not exist or is not a directory: {source_path}"
+        )
 
+    corpus_path = corpus_service.get_corpus_path(body.corpus_id)
+    created_on_disk = False
     try:
         corpus_service.create_corpus(
             corpus_id=body.corpus_id,
             description=body.description,
-            source_path=body.source_path.strip(),
+            source_path=source_path,
             llm_model=body.llm_model,
             llm_provider=body.llm_provider,
         )
+        created_on_disk = True
         vector_service.ensure_collection(body.corpus_id)
         logger.info(f"API: created corpus {body.corpus_id}")
     except Exception as e:
-        logger.error(f"Failed to create corpus {body.corpus_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Failed to create corpus {body.corpus_id}")
+        # Roll back the on-disk corpus if vector collection setup failed
+        if created_on_disk and corpus_path.exists():
+            try:
+                shutil.rmtree(corpus_path)
+                logger.info(f"Rolled back corpus directory for {body.corpus_id}")
+            except Exception:
+                logger.exception(f"Rollback failed for {body.corpus_id}")
+        raise HTTPException(status_code=500, detail="Failed to create corpus. Check server logs for details.")
 
     return CreateCorpusResponse(
         status="created",
