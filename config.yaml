@@ -28,11 +28,19 @@ models:
     provider: "ollama"
     base_url: "http://localhost:11434"
     model: "nomic-embed-text"
+  # Uncomment to set a global default answer model (corpora can override individually)
+  # answer:
+  #   provider: "ollama"
+  #   base_url: "http://localhost:11434"
+  #   model: "llama3"
 
 vector_db:
   backend: "qdrant"
   url: "http://localhost:6333"
   collection_prefix: "instance01"
-  vector_size: null
+  vector_size: null   # auto-detect from the embedding model on first ingest
   on_disk: true
   hnsw_on_disk: true
+
+state_db:
+  path: "rag_library/state/ingest.sqlite"
