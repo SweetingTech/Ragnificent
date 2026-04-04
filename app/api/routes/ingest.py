@@ -1,8 +1,10 @@
 """
 Ingestion API routes for triggering document processing.
 """
+
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, Generator
 from functools import lru_cache
@@ -11,7 +13,7 @@ from ...config.loader import load_config
 from ...config.schema import GlobalConfig
 from ...ingest.pipeline import IngestionPipeline
 from ...state.db import Database
-from ...vector.qdrant_client import VectorService
+from ...vector.qdrant_client import VectorService, get_qdrant_connection_error
 from ...services.corpus_service import validate_corpus_id, CorpusValidationError
 from ...utils.logging import setup_logging
 
@@ -22,6 +24,7 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 class IngestResponse(BaseModel):
     """Response model for ingestion API."""
+
     status: str
     message: str
     summary: Optional[Dict[str, Any]] = None
@@ -53,9 +56,7 @@ def get_vector_service() -> VectorService:
     return VectorService(config.vector_db.url, config.vector_db.collection_prefix)
 
 
-def get_pipeline(
-    db: Database = Depends(get_database)
-) -> IngestionPipeline:
+def get_pipeline(db: Database = Depends(get_database)) -> IngestionPipeline:
     """Get ingestion pipeline instance with database dependency."""
     config = get_config()
     vector_service = get_vector_service()
@@ -64,8 +65,7 @@ def get_pipeline(
 
 @router.post("/run", response_model=IngestResponse)
 async def run_ingest(
-    corpus_id: Optional[str] = None,
-    pipeline: IngestionPipeline = Depends(get_pipeline)
+    corpus_id: Optional[str] = None, pipeline: IngestionPipeline = Depends(get_pipeline)
 ):
     """
     Trigger document ingestion.
@@ -90,14 +90,21 @@ async def run_ingest(
         return IngestResponse(
             status="success",
             message=f"Ingestion completed for {corpus_id or 'all corpora'}",
-            summary=summary
+            summary=summary,
         )
     except Exception as e:
-        logger.error(f"Ingestion failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ingestion failed: {e}"
-        )
+        if get_qdrant_connection_error(e):
+            message = f"Cannot reach Qdrant at {pipeline.config.vector_db.url}. Is it running?"
+            logger.warning(f"{message} Original error: {e}")
+            return JSONResponse(
+                status_code=503,
+                content=IngestResponse(status="error", message=message).model_dump(
+                    exclude_none=True
+                ),
+            )
+
+        logger.exception("Ingestion failed")
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 
 @router.get("/status")
@@ -109,7 +116,4 @@ async def ingest_status():
         Current status of the ingestion system
     """
     # Placeholder for future implementation
-    return {
-        "status": "idle",
-        "message": "No active ingestion jobs"
-    }
+    return {"status": "idle", "message": "No active ingestion jobs"}

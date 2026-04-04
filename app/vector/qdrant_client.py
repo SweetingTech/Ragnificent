@@ -1,6 +1,8 @@
 """
 Qdrant vector database service for storing and searching document embeddings.
 """
+
+import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -11,6 +13,28 @@ logger = setup_logging()
 
 # Constants
 DEFAULT_VECTOR_SIZE = 768
+
+
+def get_qdrant_connection_error(error: BaseException) -> Optional[BaseException]:
+    """Extract a nested Qdrant connection error if one is present."""
+    pending = [error]
+    seen = set()
+
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+
+        if isinstance(current, (httpx.ConnectError, ConnectionRefusedError)):
+            return current
+
+        for attr in ("source", "__cause__", "__context__"):
+            nested = getattr(current, attr, None)
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+
+    return None
 
 
 class VectorService:
@@ -64,19 +88,29 @@ class VectorService:
             exists = True
         except UnexpectedResponse as e:
             # Treat 404/not-found as "collection does not exist"
-            if hasattr(e, 'status_code') and e.status_code == 404:
+            if hasattr(e, "status_code") and e.status_code == 404:
                 exists = False
             else:
-                logger.error(f"Failed to check collection existence for {collection_name}: {e}")
+                logger.error(
+                    f"Failed to check collection existence for {collection_name}: {e}"
+                )
                 return False
         except Exception as e:
-            logger.error(f"Failed to check collection existence for {collection_name}: {e}")
+            logger.error(
+                f"Failed to check collection existence for {collection_name}: {e}"
+            )
             return False
 
         self._collection_cache[collection_name] = exists
         return exists
 
-    def ensure_collection(self, corpus_id: str, vector_size: int = DEFAULT_VECTOR_SIZE, on_disk: bool = True, hnsw_on_disk: bool = True) -> None:
+    def ensure_collection(
+        self,
+        corpus_id: str,
+        vector_size: int = DEFAULT_VECTOR_SIZE,
+        on_disk: bool = True,
+        hnsw_on_disk: bool = True,
+    ) -> None:
         """
         Ensure a collection exists, creating it if necessary.
 
@@ -89,7 +123,9 @@ class VectorService:
         collection_name = self._get_collection_name(corpus_id)
 
         if self.collection_exists(corpus_id):
-            logger.debug(f"Collection {collection_name} already exists, verifying dimensions...")
+            logger.debug(
+                f"Collection {collection_name} already exists, verifying dimensions..."
+            )
             # Verify the existing dimension matches the requested one
             try:
                 info = self.client.get_collection(collection_name=collection_name)
@@ -97,7 +133,10 @@ class VectorService:
                 existing_size = None
                 if isinstance(info.config.params.vectors, models.VectorParams):
                     existing_size = info.config.params.vectors.size
-                elif isinstance(info.config.params.vectors, dict) and "" in info.config.params.vectors:
+                elif (
+                    isinstance(info.config.params.vectors, dict)
+                    and "" in info.config.params.vectors
+                ):
                     existing_size = info.config.params.vectors[""].size
 
                 if existing_size and existing_size != vector_size:
@@ -105,21 +144,21 @@ class VectorService:
                     logger.error(error_msg)
                     raise ValueError(error_msg)
             except Exception as e:
-                logger.warning(f"Could not verify existing collection dimensions for {collection_name}: {e}")
+                logger.warning(
+                    f"Could not verify existing collection dimensions for {collection_name}: {e}"
+                )
             return
 
         try:
-            logger.info(f"Creating collection {collection_name} with vector size {vector_size}")
+            logger.info(
+                f"Creating collection {collection_name} with vector size {vector_size}"
+            )
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config=models.VectorParams(
-                    size=vector_size,
-                    distance=models.Distance.COSINE,
-                    on_disk=on_disk
+                    size=vector_size, distance=models.Distance.COSINE, on_disk=on_disk
                 ),
-                hnsw_config=models.HnswConfigDiff(
-                    on_disk=hnsw_on_disk
-                )
+                hnsw_config=models.HnswConfigDiff(on_disk=hnsw_on_disk),
             )
             # Update cache
             self._collection_cache[collection_name] = True
@@ -127,7 +166,14 @@ class VectorService:
             logger.error(f"Failed to create collection {collection_name}: {e}")
             raise
 
-    def upsert_chunks(self, corpus_id: str, chunks: List[Dict], vector_size: int, on_disk: bool = True, hnsw_on_disk: bool = True) -> None:
+    def upsert_chunks(
+        self,
+        corpus_id: str,
+        chunks: List[Dict],
+        vector_size: int,
+        on_disk: bool = True,
+        hnsw_on_disk: bool = True,
+    ) -> None:
         """
         Upsert document chunks to the vector database.
 
@@ -148,18 +194,12 @@ class VectorService:
         self.ensure_collection(corpus_id, vector_size, on_disk, hnsw_on_disk)
 
         points = [
-            models.PointStruct(
-                id=c['id'],
-                vector=c['vector'],
-                payload=c['payload']
-            ) for c in chunks
+            models.PointStruct(id=c["id"], vector=c["vector"], payload=c["payload"])
+            for c in chunks
         ]
 
         try:
-            self.client.upsert(
-                collection_name=collection_name,
-                points=points
-            )
+            self.client.upsert(collection_name=collection_name, points=points)
             logger.info(f"Upserted {len(points)} chunks to {collection_name}")
         except Exception as e:
             logger.error(f"Failed to upsert chunks to {collection_name}: {e}")
@@ -176,7 +216,9 @@ class VectorService:
         collection_name = self._get_collection_name(corpus_id)
 
         if not self.collection_exists(corpus_id):
-            logger.warning(f"Collection {collection_name} does not exist, nothing to delete")
+            logger.warning(
+                f"Collection {collection_name} does not exist, nothing to delete"
+            )
             return
 
         try:
@@ -187,15 +229,17 @@ class VectorService:
                         must=[
                             models.FieldCondition(
                                 key="file_hash",
-                                match=models.MatchValue(value=file_hash)
+                                match=models.MatchValue(value=file_hash),
                             )
                         ]
                     )
-                )
+                ),
             )
             logger.info(f"Deleted chunks for file {file_hash} in {collection_name}")
         except Exception as e:
-            logger.error(f"Failed to delete chunks for {file_hash} in {collection_name}: {e}")
+            logger.error(
+                f"Failed to delete chunks for {file_hash} in {collection_name}: {e}"
+            )
             raise
 
     def search(self, corpus_id: str, vector: List[float], limit: int = 5) -> List:
@@ -214,14 +258,14 @@ class VectorService:
 
         # Check if collection exists before searching
         if not self.collection_exists(corpus_id):
-            logger.warning(f"Collection {collection_name} does not exist, returning empty results")
+            logger.warning(
+                f"Collection {collection_name} does not exist, returning empty results"
+            )
             return []
 
         try:
             return self.client.search(
-                collection_name=collection_name,
-                query_vector=vector,
-                limit=limit
+                collection_name=collection_name, query_vector=vector, limit=limit
             )
         except UnexpectedResponse as e:
             logger.error(f"Qdrant search failed for {collection_name}: {e}")
