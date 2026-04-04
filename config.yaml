@@ -1,6 +1,3 @@
-# RAGnificent — global configuration
-# All paths are relative to the project root (the directory where you start the server).
-
 library_root: "rag_library"
 
 ingest:
