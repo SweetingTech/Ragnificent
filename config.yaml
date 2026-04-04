@@ -1,9 +1,12 @@
-library_root: "d:/github/Ragnificent/rag_library"
+# RAGnificent — global configuration
+# All paths are relative to the project root (the directory where you start the server).
+
+library_root: "rag_library"
 
 ingest:
   poll_interval_seconds: 300
   max_parallel_files: 1
-  lock_file: "d:/github/Ragnificent/rag_library/.locks/ingest.lock"
+  lock_file: "rag_library/.locks/ingest.lock"
   ocr_trigger:
     min_chars_per_page: 200
     min_dictionary_word_ratio: 0.35
@@ -21,18 +24,26 @@ ocr:
     deskew: true
     rotate_pages: true
     clean: true
-    cache_dir: "d:/github/Ragnificent/rag_library/cache/ocr"
+    cache_dir: "rag_library/cache/ocr"
 
 models:
   embeddings:
     provider: "ollama"
     base_url: "http://localhost:11434"
     model: "nomic-embed-text"
+  # Uncomment to set a global default answer model (corpora can override individually)
+  # answer:
+  #   provider: "ollama"
+  #   base_url: "http://localhost:11434"
+  #   model: "llama3"
 
 vector_db:
   backend: "qdrant"
   url: "http://localhost:6333"
   collection_prefix: "instance01"
-  vector_size: null
+  vector_size: null   # auto-detect from the embedding model on first ingest
   on_disk: true
   hnsw_on_disk: true
+
+state_db:
+  path: "rag_library/state/ingest.sqlite"

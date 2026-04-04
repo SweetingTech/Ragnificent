@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 import os
 from fastapi.staticfiles import StaticFiles
-from .routes import health, query, ingest
+from .routes import health, query, ingest, control
 from ..gui import routes as gui_routes
 
 def create_app():
@@ -17,6 +17,7 @@ def create_app():
     app.include_router(health.router)
     app.include_router(query.router, prefix="/api")
     app.include_router(ingest.router, prefix="/api")
+    app.include_router(control.router, prefix="/api")
     app.include_router(gui_routes.router)
 
     @app.get("/")

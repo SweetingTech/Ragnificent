@@ -150,17 +150,21 @@ class IngestionPipeline:
             files.extend(found)
         return files
 
-    def run_once(self, corpus_id: Optional[str] = None) -> Dict[str, Any]:
+    def run_once(self, corpus_id: Optional[str] = None, source_path_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Run a single ingestion pass.
 
         Args:
-            corpus_id: Optional specific corpus to process
+            corpus_id: Optional specific corpus to process.
+            source_path_override: Optional path to scan instead of the corpus-configured
+                                  source/inbox path.  Can be any absolute or relative path
+                                  accessible to the server (e.g. "D:/Books").
+                                  Requires corpus_id to be set.
 
         Returns:
             Summary of the ingestion run
         """
-        logger.info(f"Starting ingestion run (corpus={corpus_id or 'all'})...")
+        logger.info(f"Starting ingestion run (corpus={corpus_id or 'all'}, source_override={source_path_override})...")
 
         corpora = self._get_corpora(corpus_id)
         summary = {
@@ -172,7 +176,9 @@ class IngestionPipeline:
 
         for corpus in corpora:
             cid = corpus['id']
-            scan_path = corpus.get('source_path') or corpus.get('inbox_path')
+            # Use the caller-supplied override if given, otherwise fall back to
+            # the corpus-configured path (source_path > inbox_path).
+            scan_path = source_path_override or corpus.get('source_path') or corpus.get('inbox_path')
 
             logger.info(f"Scanning corpus: {cid} at {scan_path}")
 
