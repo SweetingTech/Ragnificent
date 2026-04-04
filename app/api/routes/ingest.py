@@ -65,17 +65,29 @@ def get_pipeline(db: Database = Depends(get_database)) -> IngestionPipeline:
 
 @router.post("/run", response_model=IngestResponse)
 async def run_ingest(
-    corpus_id: Optional[str] = None, pipeline: IngestionPipeline = Depends(get_pipeline)
+    corpus_id: Optional[str] = None,
+    source_path: Optional[str] = None,
+    pipeline: IngestionPipeline = Depends(get_pipeline)
 ):
     """
     Trigger document ingestion.
 
     Args:
         corpus_id: Optional specific corpus to ingest. If not provided, all corpora are processed.
+        source_path: Optional path to scan for documents. Can be any absolute or relative
+                     path on the server (e.g. D:/Books, /mnt/nas/documents).
+                     When provided, corpus_id must also be given so documents are stored
+                     in the correct corpus collection.  The corpus must already exist.
 
     Returns:
         Ingestion status and summary
     """
+    if source_path and not corpus_id:
+        raise HTTPException(
+            status_code=400,
+            detail="corpus_id is required when source_path is provided"
+        )
+
     # Validate corpus_id if provided
     if corpus_id:
         try:
@@ -84,13 +96,16 @@ async def run_ingest(
             raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        # Run the blocking ingestion in a thread pool to avoid blocking the event loop
-        summary = await asyncio.to_thread(pipeline.run_once, corpus_id)
+        summary = await asyncio.to_thread(pipeline.run_once, corpus_id, source_path)
+
+        desc = corpus_id or "all corpora"
+        if source_path:
+            desc = f"{corpus_id} (source: {source_path})"
 
         return IngestResponse(
             status="success",
-            message=f"Ingestion completed for {corpus_id or 'all corpora'}",
-            summary=summary,
+            message=f"Ingestion completed for {desc}",
+            summary=summary
         )
     except Exception as e:
         if get_connection_error(e):
