@@ -19,6 +19,10 @@ class FailingPipeline:
         raise self.error
 
 
+def raise_error(error: Exception):
+    raise error
+
+
 def make_config(tmp_path) -> GlobalConfig:
     library_root = tmp_path / "library"
     library_root.mkdir()
@@ -27,7 +31,7 @@ def make_config(tmp_path) -> GlobalConfig:
         library_root=str(library_root),
         ingest={
             "lock_file": str(tmp_path / "ingest.lock"),
-            "ocr_trigger": {"min_text_chars": 10.0},
+            "ocr_trigger": {"min_text_chars": 10},
         },
         extraction={
             "pdf_backend": "pymupdf",
@@ -84,7 +88,7 @@ def test_startup_logs_warning_when_qdrant_is_unreachable(tmp_path, monkeypatch, 
     )
     monkeypatch.setattr(
         "app.vector.qdrant_client.QdrantClient.get_collections",
-        lambda self: (_ for _ in ()).throw(
+        lambda self: raise_error(
             ResponseHandlingException(httpx.ConnectError("connection refused"))
         ),
     )

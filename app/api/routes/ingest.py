@@ -13,7 +13,7 @@ from ...config.loader import load_config
 from ...config.schema import GlobalConfig
 from ...ingest.pipeline import IngestionPipeline
 from ...state.db import Database
-from ...vector.qdrant_client import VectorService, get_qdrant_connection_error
+from ...vector.qdrant_client import VectorService, get_connection_error
 from ...services.corpus_service import validate_corpus_id, CorpusValidationError
 from ...utils.logging import setup_logging
 
@@ -93,7 +93,7 @@ async def run_ingest(
             summary=summary,
         )
     except Exception as e:
-        if get_qdrant_connection_error(e):
+        if get_connection_error(e):
             message = f"Cannot reach Qdrant at {pipeline.config.vector_db.url}. Is it running?"
             logger.warning(f"{message} Original error: {e}")
             return JSONResponse(
@@ -103,7 +103,7 @@ async def run_ingest(
                 ),
             )
 
-        logger.exception("Ingestion failed")
+        logger.exception("Ingestion process failed unexpectedly")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 

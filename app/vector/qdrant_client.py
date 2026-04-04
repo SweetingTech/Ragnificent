@@ -3,6 +3,7 @@ Qdrant vector database service for storing and searching document embeddings.
 """
 
 import httpx
+from collections import deque
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -15,13 +16,21 @@ logger = setup_logging()
 DEFAULT_VECTOR_SIZE = 768
 
 
-def get_qdrant_connection_error(error: BaseException) -> Optional[BaseException]:
-    """Extract a nested Qdrant connection error if one is present."""
-    pending = [error]
+def get_connection_error(error: BaseException) -> Optional[BaseException]:
+    """
+    Extract a nested Qdrant connection error if one is present.
+
+    Args:
+        error: The original exception raised while talking to Qdrant.
+
+    Returns:
+        The nested connection-related exception, or None if the error was caused by something else.
+    """
+    pending = deque([error])
     seen = set()
 
     while pending:
-        current = pending.pop(0)
+        current = pending.popleft()
         if id(current) in seen:
             continue
         seen.add(id(current))

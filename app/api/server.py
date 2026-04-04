@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from .routes import health, query, ingest, corpora
 from ..gui import routes as gui_routes
 from ..utils.logging import setup_logging
-from ..vector.qdrant_client import VectorService, get_qdrant_connection_error
+from ..vector.qdrant_client import VectorService, get_connection_error
 
 logger = setup_logging()
 
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
             )
             vector_service.client.get_collections()
         except Exception as e:
-            if get_qdrant_connection_error(e):
+            if get_connection_error(e):
                 logger.warning(
                     f"Cannot reach Qdrant at {config.vector_db.url}. Is it running?"
                 )
