@@ -2,8 +2,8 @@
 Qdrant vector database service for storing and searching document embeddings.
 """
 
-import httpx
 from collections import deque
+import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse

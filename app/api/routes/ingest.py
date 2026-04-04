@@ -103,7 +103,9 @@ async def run_ingest(
                 ),
             )
 
-        logger.exception("Ingestion process failed unexpectedly")
+        logger.exception(
+            f"Ingestion failed unexpectedly for {corpus_id or 'all corpora'}"
+        )
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 
