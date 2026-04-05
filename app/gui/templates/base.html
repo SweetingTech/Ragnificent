@@ -6,9 +6,18 @@
     <title>{% block title %}Ragnificent{% endblock %}</title>
     <link href="/static/styles.css" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <!-- Simple hyperscript or alpine can be added if more interactivity needed -->
 </head>
 <body>
+
+    <!-- Global spinner overlay — shown during any HTMX request -->
+    <div id="global-spinner" aria-live="polite">
+        <div class="spinner-ring"></div>
+        <span id="spinner-label">Working…</span>
+    </div>
+
+    <!-- Toast container — toasts stack here -->
+    <div id="toast-container" aria-live="polite"></div>
+
     <div class="container">
         <header>
             <div>
@@ -27,5 +36,118 @@
             {% block content %}{% endblock %}
         </main>
     </div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Toast system
+// ---------------------------------------------------------------------------
+function showToast(message, type = "info", duration = 4000) {
+    const container = document.getElementById("toast-container");
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+
+    const icons = { info: "ℹ", success: "✓", error: "✗", warning: "⚠" };
+    toast.innerHTML = `<span class="toast-icon">${icons[type] || "ℹ"}</span>
+                       <span class="toast-msg">${message}</span>
+                       <button class="toast-close" onclick="this.parentElement.remove()">×</button>`;
+    container.appendChild(toast);
+
+    // Animate in
+    requestAnimationFrame(() => toast.classList.add("toast-visible"));
+
+    if (duration > 0) {
+        setTimeout(() => {
+            toast.classList.remove("toast-visible");
+            toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+        }, duration);
+    }
+    return toast;
+}
+
+// ---------------------------------------------------------------------------
+// Spinner — show during HTMX requests, hide on response
+// ---------------------------------------------------------------------------
+const spinner = document.getElementById("global-spinner");
+const spinnerLabel = document.getElementById("spinner-label");
+
+const SPINNER_LABELS = {
+    "/api/ingest/run": "Ingesting files…",
+    "/api/query":      "Querying knowledge base…",
+    "/api/query/ui":   "Thinking…",
+    "/gui/settings/save": "Saving settings…",
+    "/gui/corpora/create": "Creating librarian…",
+    "delete":          "Deleting…",
+};
+
+function getLabel(path) {
+    for (const [key, label] of Object.entries(SPINNER_LABELS)) {
+        if (path.includes(key)) return label;
+    }
+    return "Working…";
+}
+
+document.body.addEventListener("htmx:beforeRequest", function(e) {
+    const path = e.detail.requestConfig?.path || "";
+    spinnerLabel.textContent = getLabel(path);
+    spinner.classList.add("spinner-active");
+});
+
+document.body.addEventListener("htmx:afterRequest", function(e) {
+    spinner.classList.remove("spinner-active");
+
+    const xhr = e.detail.xhr;
+    const path = e.detail.requestConfig?.path || "";
+    const ok = xhr && xhr.status >= 200 && xhr.status < 300;
+
+    // Read server-sent toast message from response header
+    const toastHeader = xhr && xhr.getResponseHeader("X-Toast");
+    if (toastHeader) {
+        try {
+            const { message, type } = JSON.parse(toastHeader);
+            showToast(message, type || (ok ? "success" : "error"));
+            return;
+        } catch (_) {}
+    }
+
+    // Default messages for known endpoints
+    if (path.includes("/api/ingest/run")) {
+        if (ok) {
+            try {
+                const data = JSON.parse(xhr.responseText);
+                const summary = data.summary || {};
+                const processed = summary.processed ?? "?";
+                const skipped   = summary.skipped   ?? "?";
+                const failed    = summary.failed     ?? 0;
+                showToast(
+                    `Sync complete — ${processed} processed, ${skipped} skipped${failed ? ", " + failed + " failed" : ""}`,
+                    failed ? "warning" : "success",
+                    6000
+                );
+            } catch (_) { showToast("Sync complete.", "success"); }
+        } else {
+            showToast("Sync failed — check server logs.", "error", 0);
+        }
+    } else if (path.includes("/api/query/ui") || path.includes("/api/query")) {
+        if (!ok) showToast("Query failed — check server logs.", "error", 0);
+    }
+});
+
+document.body.addEventListener("htmx:sendError", function() {
+    spinner.classList.remove("spinner-active");
+    showToast("Network error — server may be unreachable.", "error", 0);
+});
+
+// ---------------------------------------------------------------------------
+// Wire up regular form submits (non-HTMX) with a spinner too
+// ---------------------------------------------------------------------------
+document.addEventListener("submit", function(e) {
+    const form = e.target;
+    // Don't double-trigger for HTMX forms
+    if (form.hasAttribute("hx-post") || form.hasAttribute("hx-get")) return;
+    const action = form.action || "";
+    spinnerLabel.textContent = getLabel(action);
+    spinner.classList.add("spinner-active");
+});
+</script>
 </body>
 </html>

@@ -11,8 +11,7 @@
     <div class="col-4" style="text-align: right; display: flex; gap: 0.75rem; justify-content: flex-end;">
         <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}"
                 hx-swap="none"
-                class="btn btn-primary"
-                onclick="alert('Sync started...');">
+                class="btn btn-primary">
             Sync Files Now
         </button>
         <form method="POST" action="/gui/corpora/{{ corpus.corpus_id }}/delete"

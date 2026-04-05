@@ -1,10 +1,11 @@
 """
 GUI routes for the web interface.
 """
+import json
 import shutil
 import yaml
 from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from typing import List, Dict, Any, Optional
 from functools import lru_cache
@@ -24,6 +25,12 @@ from ..services.corpus_service import (
 from ..utils.logging import setup_logging
 
 logger = setup_logging()
+
+
+def _toast(message: str, type: str = "info") -> dict:
+    """Build X-Toast header value."""
+    return {"X-Toast": json.dumps({"message": message, "type": type})}
+
 
 templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
@@ -252,7 +259,8 @@ async def delete_corpus(request: Request, corpus_id: str):
         logger.error(f"Failed to remove corpus directory: {e}")
         return HTMLResponse(f"Partial delete — directory removal failed: {e}", status_code=500)
 
-    return RedirectResponse(url="/gui/corpora", status_code=303)
+    return RedirectResponse(url="/gui/corpora", status_code=303,
+                            headers=_toast(f"Librarian '{corpus_id}' deleted.", "success"))
 
 
 # ---------------------------------------------------------------------------
@@ -330,4 +338,5 @@ async def settings_save(
         logger.error(f"Failed to save settings: {e}")
         return HTMLResponse(f"Failed to save settings: {e}", status_code=500)
 
-    return RedirectResponse(url="/gui/settings?saved=1", status_code=303)
+    return RedirectResponse(url="/gui/settings?saved=1", status_code=303,
+                            headers=_toast("Settings saved successfully.", "success"))
