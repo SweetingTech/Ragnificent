@@ -46,3 +46,51 @@ presets:
       strategy: "heading_then_paragraph"
       max_tokens: 650
       overlap_tokens: 100
+
+  pdf_general:
+    display_name: "PDF General"
+    description: "Recommended for general PDFs, mixed documents, and broad knowledge bases."
+    embedding:
+      provider: "openrouter"
+      model: "qwen/qwen3-embedding-8b"
+      base_url: "https://openrouter.ai/api/v1"
+    chunking:
+      strategy: "paragraph_sections"
+      max_tokens: 700
+      overlap_tokens: 100
+
+  pdf_technical:
+    display_name: "PDF Technical"
+    description: "Recommended for technical PDFs, manuals, specifications, and dense reference material."
+    embedding:
+      provider: "ollama"
+      model: "snowflake-arctic-embed"
+      base_url: "http://localhost:11434"
+    chunking:
+      strategy: "paragraph_sections"
+      max_tokens: 500
+      overlap_tokens: 100
+
+  pdf_academic:
+    display_name: "PDF Academic"
+    description: "Recommended for research papers, textbooks, and citation-heavy PDFs where retrieval precision matters."
+    embedding:
+      provider: "openai"
+      model: "text-embedding-3-large"
+      base_url: "https://api.openai.com/v1"
+    chunking:
+      strategy: "paragraph_sections"
+      max_tokens: 450
+      overlap_tokens: 90
+
+  pdf_budget:
+    display_name: "PDF Budget"
+    description: "Recommended for economical bulk PDF ingest when cost matters more than premium precision."
+    embedding:
+      provider: "openai"
+      model: "text-embedding-3-small"
+      base_url: "https://api.openai.com/v1"
+    chunking:
+      strategy: "paragraph_sections"
+      max_tokens: 650
+      overlap_tokens: 100

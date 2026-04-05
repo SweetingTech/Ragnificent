@@ -3,6 +3,7 @@ OpenAI-compatible provider for embeddings and LLM.
 Works with OpenAI, OpenRouter, and any other OpenAI-compatible endpoint.
 """
 import os
+import time
 import httpx
 from typing import List, Optional
 from .base import EmbeddingProvider, LLMProvider
@@ -12,6 +13,9 @@ logger = setup_logging()
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+EMBED_BATCH_SIZE = 16
+EMBED_TIMEOUT_SECONDS = 120.0
+EMBED_MAX_RETRIES = 3
 
 _ENV_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
@@ -48,19 +52,42 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {"model": self.model, "input": texts}
+        endpoint = f"{self.base_url}/embeddings"
+        all_embeddings: List[List[float]] = []
 
         try:
-            with httpx.Client(timeout=60.0) as client:
-                resp = client.post(
-                    f"{self.base_url}/embeddings", json=payload, headers=headers
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                ordered = sorted(data["data"], key=lambda x: x["index"])
-                return [e["embedding"] for e in ordered]
+            with httpx.Client(timeout=EMBED_TIMEOUT_SECONDS) as client:
+                for start in range(0, len(texts), EMBED_BATCH_SIZE):
+                    batch = texts[start:start + EMBED_BATCH_SIZE]
+                    payload = {"model": self.model, "input": batch}
+                    last_error = None
+
+                    for attempt in range(1, EMBED_MAX_RETRIES + 1):
+                        try:
+                            resp = client.post(endpoint, json=payload, headers=headers)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            ordered = sorted(data["data"], key=lambda x: x["index"])
+                            all_embeddings.extend(e["embedding"] for e in ordered)
+                            last_error = None
+                            break
+                        except Exception as exc:
+                            last_error = exc
+                            if attempt >= EMBED_MAX_RETRIES:
+                                raise
+                            logger.warning(
+                                f"Embedding batch retry {attempt}/{EMBED_MAX_RETRIES - 1} for "
+                                f"{self.model} after {len(all_embeddings)} / {len(texts)} chunks: {exc}"
+                            )
+                            time.sleep(min(2 * attempt, 6))
+
+                    if last_error is not None:
+                        raise last_error
+            return all_embeddings
         except Exception as e:
-            logger.error(f"OpenAI embedding failed ({self.model}): {e}")
+            logger.error(
+                f"OpenAI embedding failed ({self.model}) after {len(all_embeddings)} / {len(texts)} chunks: {e}"
+            )
             raise
 
 

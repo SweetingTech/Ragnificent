@@ -80,6 +80,7 @@ graph TD
 - Lane-based extraction routing: PyMuPDF for native PDFs, OCRmyPDF for scanned PDFs, Tesseract/PaddleOCR for images, dedicated EPUB extractor, text/code loader
 - OCR fallback per-page when text density falls below a configurable threshold
 - Three chunking strategies: Markdown header-aware, PDF paragraph-based with overlap, Python function/class symbol-aware
+- OpenAI-compatible embedding requests are batched with retry/backoff so large PDFs and textbook-scale corpora are less likely to fail on remote embedding providers
 - Live ingest progress from `/api/ingest/status` and the GUI overlay: total files, completed count, current file, processed/skipped/failed counts, percent complete
 - Retry failed files from the corpus management page without re-running a full corpus scan
 
@@ -104,7 +105,7 @@ graph TD
 - Edit this file to add, remove, or reorder models without touching any code
 
 ### Embedding Presets
-- `embedding_presets.yaml` defines user-facing ingest presets such as `EPUB General`, `EPUB Technical`, `EPUB Academic`, and `EPUB Budget`
+- `embedding_presets.yaml` defines user-facing ingest presets such as `EPUB General`, `EPUB Technical`, `EPUB Academic`, `EPUB Budget`, `PDF General`, `PDF Technical`, `PDF Academic`, and `PDF Budget`
 - Presets auto-fill embedding provider, embedding model, base URL, and chunking defaults during corpus creation
 - Users can still override any preset field before deploying a corpus
 - Presets are saved into each corpus config so the ingest pipeline and query path use the same embedding policy later
@@ -333,6 +334,11 @@ Defines the user-facing presets shown on the Deploy New Librarian page. Each pre
 - chunking strategy
 - chunk target tokens
 - chunk overlap tokens
+
+Current preset families:
+
+- EPUB presets use heading-aware chunking for prose-heavy and structured ebook content
+- PDF presets use paragraph-oriented chunking for manuals, textbooks, research papers, and scanned/native PDF workflows
 
 ### `models_catalog.yaml` — UI dropdowns
 
