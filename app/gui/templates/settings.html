@@ -25,7 +25,7 @@
         </p>
 
         <label>Provider</label>
-        <select name="embed_provider" id="embed_provider" onchange="populateEmbedModels(null)">
+        <select name="embed_provider" id="embed_provider" onchange="onEmbedProviderChange()">
             <option value="ollama"     {% if embed_provider == 'ollama'     %}selected{% endif %}>Ollama (Local / LAN)</option>
             <option value="openai"     {% if embed_provider == 'openai'     %}selected{% endif %}>OpenAI</option>
             <option value="openrouter" {% if embed_provider == 'openrouter' %}selected{% endif %}>OpenRouter</option>
@@ -58,7 +58,7 @@
         </p>
 
         <label>Provider</label>
-        <select name="answer_provider" id="answer_provider" onchange="populateAnswerModels(null)">
+        <select name="answer_provider" id="answer_provider" onchange="onAnswerProviderChange()">
             <option value="ollama"     {% if answer_provider == 'ollama'     %}selected{% endif %}>Ollama (Local / LAN)</option>
             <option value="openai"     {% if answer_provider == 'openai'     %}selected{% endif %}>OpenAI (ChatGPT)</option>
             <option value="anthropic"  {% if answer_provider == 'anthropic'  %}selected{% endif %}>Anthropic (Claude)</option>
@@ -127,9 +127,36 @@
 const CATALOG = {{ models_catalog | tojson }};
 const SAVED_EMBED_MODEL  = "{{ embed_model }}";
 const SAVED_ANSWER_MODEL = "{{ answer_model }}";
+const PROVIDER_SETTINGS = {
+    embedding: {
+        ollama: { baseUrl: "http://localhost:11434", customModel: true, customBaseUrl: true },
+        openai: { baseUrl: "https://api.openai.com/v1", customModel: false, customBaseUrl: false },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1", customModel: false, customBaseUrl: false },
+    },
+    llm: {
+        ollama: { baseUrl: "http://localhost:11434", customModel: true, customBaseUrl: true },
+        openai: { baseUrl: "https://api.openai.com/v1", customModel: false, customBaseUrl: false },
+        anthropic: { baseUrl: "https://api.anthropic.com/v1", customModel: false, customBaseUrl: false },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1", customModel: false, customBaseUrl: false },
+    },
+};
+
+function getProviderSettings(role, provider) {
+    return PROVIDER_SETTINGS[role][provider] || { baseUrl: "", customModel: false, customBaseUrl: false };
+}
+
+function getModels(role, provider) {
+    return ((CATALOG[role] || {})[provider] || {}).models || [];
+}
+
+function getDefaultModel(role, provider) {
+    const models = getModels(role, provider);
+    return models.length ? models[0].id : "__other__";
+}
 
 function buildOptions(role, provider, currentValue) {
-    const models = ((CATALOG[role] || {})[provider] || {}).models || [];
+    const models = getModels(role, provider);
+    const settings = getProviderSettings(role, provider);
     let html = "";
     let found = false;
     for (const m of models) {
@@ -138,26 +165,53 @@ function buildOptions(role, provider, currentValue) {
         const note = (m.notes || "").replace(/"/g, "&quot;");
         html += `<option value="${m.id}"${sel} title="${note}">${m.display_name}</option>`;
     }
-    if (!found && currentValue) {
+    if (!found && settings.customModel && currentValue) {
         html += `<option value="${currentValue}" selected>${currentValue} (current)</option>`;
     }
-    html += `<option value="__other__">Other (type below)…</option>`;
+    if (settings.customModel) {
+        html += `<option value="__other__">Other (type below)…</option>`;
+    }
     return html;
+}
+
+function syncBaseUrl(role, provider, preserveLocalValue = false) {
+    const input = document.getElementById(role === "embedding" ? "embed_base_url" : "answer_base_url");
+    const settings = getProviderSettings(role, provider);
+    if (!(preserveLocalValue && settings.customBaseUrl && input.value.trim())) {
+        input.value = settings.baseUrl;
+    }
+    input.readOnly = !settings.customBaseUrl;
+    input.style.opacity = settings.customBaseUrl ? "1" : "0.75";
+    input.title = settings.customBaseUrl ? "" : "Hosted providers use their standard API endpoint.";
 }
 
 function populateEmbedModels(currentValue) {
     const provider = document.getElementById("embed_provider").value;
     const sel = document.getElementById("embed_model_select");
-    sel.innerHTML = buildOptions("embedding", provider, currentValue !== null ? currentValue : sel.value);
+    const targetValue = currentValue ?? getDefaultModel("embedding", provider);
+    sel.innerHTML = buildOptions("embedding", provider, targetValue);
+    if ([...sel.options].some(o => o.value === targetValue)) {
+        sel.value = targetValue;
+    } else {
+        sel.value = getDefaultModel("embedding", provider);
+    }
     onEmbedModelChange();
 }
 
+function onEmbedProviderChange() {
+    const provider = document.getElementById("embed_provider").value;
+    syncBaseUrl("embedding", provider);
+    populateEmbedModels(getDefaultModel("embedding", provider));
+}
+
 function onEmbedModelChange() {
+    const provider = document.getElementById("embed_provider").value;
+    const settings = getProviderSettings("embedding", provider);
     const sel      = document.getElementById("embed_model_select");
     const custom   = document.getElementById("embed_model_custom");
     const note     = document.getElementById("embed_model_note");
     const hidden   = document.getElementById("embed_model_hidden");
-    if (sel.value === "__other__") {
+    if (settings.customModel && sel.value === "__other__") {
         custom.style.display = "";
         custom.required = true;
         note.textContent = "";
@@ -166,9 +220,7 @@ function onEmbedModelChange() {
         custom.style.display = "none";
         custom.required = false;
         hidden.value = sel.value;
-        const provider = document.getElementById("embed_provider").value;
-        const models = ((CATALOG["embedding"] || {})[provider] || {}).models || [];
-        const entry = models.find(m => m.id === sel.value);
+        const entry = getModels("embedding", provider).find(m => m.id === sel.value);
         note.textContent = entry ? entry.notes : "";
     }
 }
@@ -176,16 +228,30 @@ function onEmbedModelChange() {
 function populateAnswerModels(currentValue) {
     const provider = document.getElementById("answer_provider").value;
     const sel = document.getElementById("answer_model_select");
-    sel.innerHTML = buildOptions("llm", provider, currentValue !== null ? currentValue : sel.value);
+    const targetValue = currentValue ?? getDefaultModel("llm", provider);
+    sel.innerHTML = buildOptions("llm", provider, targetValue);
+    if ([...sel.options].some(o => o.value === targetValue)) {
+        sel.value = targetValue;
+    } else {
+        sel.value = getDefaultModel("llm", provider);
+    }
     onAnswerModelChange();
 }
 
+function onAnswerProviderChange() {
+    const provider = document.getElementById("answer_provider").value;
+    syncBaseUrl("llm", provider);
+    populateAnswerModels(getDefaultModel("llm", provider));
+}
+
 function onAnswerModelChange() {
+    const provider = document.getElementById("answer_provider").value;
+    const settings = getProviderSettings("llm", provider);
     const sel      = document.getElementById("answer_model_select");
     const custom   = document.getElementById("answer_model_custom");
     const note     = document.getElementById("answer_model_note");
     const hidden   = document.getElementById("answer_model_hidden");
-    if (sel.value === "__other__") {
+    if (settings.customModel && sel.value === "__other__") {
         custom.style.display = "";
         custom.required = true;
         note.textContent = "";
@@ -194,9 +260,7 @@ function onAnswerModelChange() {
         custom.style.display = "none";
         custom.required = false;
         hidden.value = sel.value;
-        const provider = document.getElementById("answer_provider").value;
-        const models = ((CATALOG["llm"] || {})[provider] || {}).models || [];
-        const entry = models.find(m => m.id === sel.value);
+        const entry = getModels("llm", provider).find(m => m.id === sel.value);
         note.textContent = entry ? entry.notes : "";
     }
 }
@@ -214,6 +278,8 @@ document.getElementById("settings-form").addEventListener("submit", function() {
 });
 
 // Populate on page load with currently saved values
+syncBaseUrl("embedding", document.getElementById("embed_provider").value, true);
+syncBaseUrl("llm", document.getElementById("answer_provider").value, true);
 populateEmbedModels(SAVED_EMBED_MODEL);
 populateAnswerModels(SAVED_ANSWER_MODEL);
 

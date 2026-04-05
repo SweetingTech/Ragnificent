@@ -38,6 +38,12 @@ templates = Jinja2Templates(directory=str(templates_dir))
 router = APIRouter(prefix="/gui", tags=["gui"])
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
+PROVIDER_DEFAULT_BASE_URLS = {
+    "ollama": "http://localhost:11434",
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
 
 # ---------------------------------------------------------------------------
 # Cached singletons — created once per process, reused across requests.
@@ -183,6 +189,10 @@ async def create_corpus(
             source_path=source_path.strip(),
             llm_model=llm_model,
             llm_provider=llm_provider,
+            llm_base_url=(
+                llm_base_url.strip()
+                or PROVIDER_DEFAULT_BASE_URLS.get(llm_provider.strip(), "")
+            ),
         )
         vector_service.ensure_collection(corpus_id)
         logger.info(f"Created corpus: {corpus_id}")
@@ -310,20 +320,31 @@ async def settings_save(
         with open(CONFIG_PATH, "r") as f:
             raw = yaml.safe_load(f)
 
+        embed_provider = embed_provider.strip()
+        answer_provider = answer_provider.strip()
+        embed_base_url = (
+            embed_base_url.strip()
+            if embed_provider == "ollama"
+            else PROVIDER_DEFAULT_BASE_URLS.get(embed_provider, "")
+        )
+        answer_base_url = (
+            answer_base_url.strip()
+            if answer_provider == "ollama"
+            else PROVIDER_DEFAULT_BASE_URLS.get(answer_provider, "")
+        )
+
         raw.setdefault("models", {})
         raw["models"]["embeddings"] = {
-            "provider": embed_provider.strip(),
+            "provider": embed_provider,
             "model": embed_model.strip(),
+            "base_url": embed_base_url or PROVIDER_DEFAULT_BASE_URLS["ollama"],
         }
-        if embed_base_url.strip():
-            raw["models"]["embeddings"]["base_url"] = embed_base_url.strip()
 
         raw["models"]["answer"] = {
-            "provider": answer_provider.strip(),
+            "provider": answer_provider,
             "model": answer_model.strip(),
+            "base_url": answer_base_url or PROVIDER_DEFAULT_BASE_URLS["ollama"],
         }
-        if answer_base_url.strip():
-            raw["models"]["answer"]["base_url"] = answer_base_url.strip()
 
         with open(CONFIG_PATH, "w") as f:
             yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)

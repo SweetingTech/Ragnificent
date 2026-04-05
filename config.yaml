@@ -18,7 +18,7 @@ models:
   embeddings:
     base_url: http://localhost:11434
     model: nomic-embed-text
-    provider: openrouter
+    provider: ollama
 ocr:
   backend: ocrmypdf
   ocrmypdf:

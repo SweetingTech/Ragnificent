@@ -195,7 +195,8 @@ class CorpusService:
         description: str,
         source_path: str,
         llm_model: str = "llama3",
-        llm_provider: str = "ollama"
+        llm_provider: str = "ollama",
+        llm_base_url: Optional[str] = None,
     ) -> Path:
         """
         Create a new corpus with directory structure and configuration.
@@ -245,6 +246,8 @@ class CorpusService:
                 }
             }
         }
+        if llm_base_url:
+            config_content["models"]["answer"]["base_url"] = sanitize_yaml_string(llm_base_url)
 
         config_path = corpus_path / "corpus.yaml"
         with open(config_path, "w") as f:

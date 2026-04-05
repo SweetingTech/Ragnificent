@@ -29,7 +29,7 @@
         </small>
 
         <label>Answer Provider</label>
-        <select name="llm_provider" id="llm_provider" onchange="populateLlmModels(null)">
+        <select name="llm_provider" id="llm_provider" onchange="onProviderChange()">
             <option value="ollama">Ollama (Local / LAN)</option>
             <option value="openai">OpenAI (ChatGPT)</option>
             <option value="anthropic">Anthropic (Claude)</option>
@@ -59,15 +59,33 @@
 
 <script>
 const CATALOG = {{ models_catalog | tojson }};
+const PROVIDER_SETTINGS = {
+    ollama: { baseUrl: "http://localhost:11434", customModel: true, customBaseUrl: true },
+    openai: { baseUrl: "https://api.openai.com/v1", customModel: false, customBaseUrl: false },
+    anthropic: { baseUrl: "https://api.anthropic.com/v1", customModel: false, customBaseUrl: false },
+    openrouter: { baseUrl: "https://openrouter.ai/api/v1", customModel: false, customBaseUrl: false },
+};
+
+function getModels(provider) {
+    return ((CATALOG["llm"] || {})[provider] || {}).models || [];
+}
+
+function getDefaultModel(provider) {
+    const models = getModels(provider);
+    return models.length ? models[0].id : "__other__";
+}
 
 function buildOptions(provider) {
-    const models = ((CATALOG["llm"] || {})[provider] || {}).models || [];
+    const models = getModels(provider);
+    const settings = PROVIDER_SETTINGS[provider] || { customModel: false };
     let html = "";
     for (const m of models) {
         const note = (m.notes || "").replace(/"/g, "&quot;");
         html += `<option value="${m.id}" title="${note}">${m.display_name}</option>`;
     }
-    html += `<option value="__other__">Other (type below)…</option>`;
+    if (settings.customModel) {
+        html += `<option value="__other__">Other (type below)…</option>`;
+    }
     return html;
 }
 
@@ -75,20 +93,32 @@ function populateLlmModels(currentValue) {
     const provider = document.getElementById("llm_provider").value;
     const sel = document.getElementById("llm_model_select");
     sel.innerHTML = buildOptions(provider);
-    if (currentValue) {
-        const opt = [...sel.options].find(o => o.value === currentValue);
-        if (opt) sel.value = currentValue;
-    }
+    const targetValue = currentValue || getDefaultModel(provider);
+    const opt = [...sel.options].find(o => o.value === targetValue);
+    sel.value = opt ? targetValue : getDefaultModel(provider);
     onModelChange();
 }
 
+function onProviderChange() {
+    const provider = document.getElementById("llm_provider").value;
+    const settings = PROVIDER_SETTINGS[provider] || { baseUrl: "", customBaseUrl: false };
+    const input = document.querySelector('input[name="llm_base_url"]');
+    input.value = settings.baseUrl;
+    input.readOnly = !settings.customBaseUrl;
+    input.style.opacity = settings.customBaseUrl ? "1" : "0.75";
+    input.title = settings.customBaseUrl ? "" : "Hosted providers use their standard API endpoint.";
+    populateLlmModels(getDefaultModel(provider));
+}
+
 function onModelChange() {
+    const provider = document.getElementById("llm_provider").value;
+    const settings = PROVIDER_SETTINGS[provider] || { customModel: false };
     const sel    = document.getElementById("llm_model_select");
     const custom = document.getElementById("llm_model_custom");
     const note   = document.getElementById("model_note");
     const hidden = document.getElementById("llm_model_hidden");
 
-    if (sel.value === "__other__") {
+    if (settings.customModel && sel.value === "__other__") {
         custom.style.display = "";
         custom.required = true;
         note.textContent = "";
@@ -97,9 +127,7 @@ function onModelChange() {
         custom.style.display = "none";
         custom.required = false;
         hidden.value = sel.value;
-        const provider = document.getElementById("llm_provider").value;
-        const models = ((CATALOG["llm"] || {})[provider] || {}).models || [];
-        const entry = models.find(m => m.id === sel.value);
+        const entry = getModels(provider).find(m => m.id === sel.value);
         note.textContent = entry ? entry.notes : "";
     }
 }
@@ -112,6 +140,6 @@ document.getElementById("create-form").addEventListener("submit", function() {
 });
 
 // Populate on load with Ollama as the default provider
-populateLlmModels(null);
+onProviderChange();
 </script>
 {% endblock %}

@@ -69,7 +69,7 @@ class OpenAILLM(LLMProvider):
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5.4-mini",
         api_key: Optional[str] = None,
         base_url: str = OPENAI_BASE_URL,
         provider_hint: str = "openai",
