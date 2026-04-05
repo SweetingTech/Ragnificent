@@ -160,6 +160,7 @@ async def search_ui(request: Request):
         "active_page": "search",
         "corpora": corpora,
         "default_model": default_model,
+        "default_answer_provider": config.models.answer.provider if config.models.answer else "ollama",
     })
 
 

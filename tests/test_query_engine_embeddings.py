@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 
 from app.api.query_engine import QueryEngine
+from app.config.schema import AnswerModelConfig
 from app.config.schema import GlobalConfig
 
 
@@ -112,3 +113,49 @@ def test_query_uses_corpus_specific_embedding_provider(tmp_path, monkeypatch):
     }
     assert recording_embedder.calls == [["find the citation"]]
     assert result["hits"] == []
+
+
+def test_query_model_override_uses_default_answer_provider(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    config.models.answer = AnswerModelConfig(**{
+        "provider": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-5.4",
+    })
+
+    requested = {}
+
+    def fake_get_llm_provider(name, base_url=None, model="llama3", api_key=None):
+        requested.update(
+            {
+                "name": name,
+                "base_url": base_url,
+                "model": model,
+                "api_key": api_key,
+            }
+        )
+
+        class DummyLLM:
+            def generate(self, prompt, system_prompt=None):
+                return "ok"
+
+        return DummyLLM()
+
+    monkeypatch.setattr("app.api.query_engine.get_llm_provider", fake_get_llm_provider)
+
+    engine = QueryEngine(
+        vector_service=DummyVectorService(),
+        embedder=RecordingEmbedder(),
+        default_llm=None,
+        config=config,
+    )
+
+    result = engine.query("hello", corpus_id=None, llm_model="gpt-5.4")
+
+    assert requested == {
+        "name": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-5.4",
+        "api_key": None,
+    }
+    assert result["answer"] == "ok"

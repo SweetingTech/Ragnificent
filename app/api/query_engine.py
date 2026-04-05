@@ -77,6 +77,21 @@ class QueryEngine:
         else:
             self.base_url = default_base_url or DEFAULT_OLLAMA_URL
 
+        if self.config and getattr(self.config.models, "answer", None):
+            self.default_answer_provider = self.config.models.answer.provider
+            self.default_answer_base_url = (
+                self.config.models.answer.base_url
+                or DEFAULT_PROVIDER_BASE_URLS.get(
+                    self.config.models.answer.provider,
+                    DEFAULT_OLLAMA_URL,
+                )
+            )
+            self.default_answer_api_key = self.config.models.answer.api_key
+        else:
+            self.default_answer_provider = "ollama"
+            self.default_answer_base_url = self.base_url or DEFAULT_OLLAMA_URL
+            self.default_answer_api_key = None
+
     def _get_corpus_config_path(self, corpus_id: str) -> Optional[Path]:
         """
         Get the path to corpus config file.
@@ -257,7 +272,12 @@ class QueryEngine:
         if llm_model:
             # Ad-hoc model override
             try:
-                llm = get_llm_provider("ollama", base_url=self.base_url, model=llm_model)
+                llm = get_llm_provider(
+                    self.default_answer_provider,
+                    base_url=self.default_answer_base_url,
+                    model=llm_model,
+                    api_key=self.default_answer_api_key,
+                )
             except Exception as e:
                 logger.warning(f"Failed to create LLM with model {llm_model}: {e}")
                 llm = self.default_llm
