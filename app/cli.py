@@ -25,7 +25,9 @@ def cmd_serve(args):
         host=DEFAULT_HOST,
         port=DEFAULT_PORT,
         reload=True,
-        reload_dirs=["app"],
+        reload_dirs=["app", "."],
+        reload_includes=["*.py", "*.html", "*.yaml", "*.css"],
+        reload_excludes=["rag_library/*", ".git/*", "*.sqlite", "*.lock", "*.pyc"],
     )
 
 
