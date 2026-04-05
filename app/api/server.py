@@ -2,11 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 from .routes import health, query, ingest, corpora
 from ..gui import routes as gui_routes
 from ..utils.logging import setup_logging
 from ..vector.qdrant_client import VectorService, get_connection_error
+
+# Load .env on every worker startup (including hot-reloads)
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 logger = setup_logging()
 

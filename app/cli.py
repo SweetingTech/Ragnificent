@@ -4,6 +4,12 @@ Provides commands for serving, database initialization, and ingestion.
 """
 import argparse
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env from project root before anything else
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 from .config.loader import load_config
 from .state.db import Database
 from .utils.logging import setup_logging
