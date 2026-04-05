@@ -95,11 +95,18 @@ def get_corpora_with_vectors(
     corpora = corpus_service.get_all_corpora()
     result = []
     for c in corpora:
+        config = c.get("config", {})
+        embedding_config = config.get("models", {}).get("embeddings", {})
+        chunk_config = config.get("chunking", {}).get("default", {})
         result.append({
             "corpus_id": c["corpus_id"],
             "description": c.get("description", ""),
+            "source_path": c.get("source_path") or "",
             "inbox_path": c.get("inbox_path", ""),
             "vector_count": vector_service.get_count(c["corpus_id"]),
+            "embedding_provider": embedding_config.get("provider"),
+            "embedding_model": embedding_config.get("model"),
+            "chunk_strategy": chunk_config.get("strategy"),
         })
     return result
 
@@ -251,6 +258,10 @@ async def manage_corpus(request: Request, corpus_id: str):
     config = metadata.get("config", {})
     embedding_config = config.get("models", {}).get("embeddings", {})
     chunk_config = config.get("chunking", {}).get("default", {})
+    answer_config = config.get("models", {}).get("answer", {})
+    embedding_inherited = not bool(embedding_config)
+    chunking_inherited = not bool(chunk_config)
+    answer_inherited = not bool(answer_config)
     with db.cursor() as cursor:
         cursor.execute(
             "SELECT COUNT(*) AS count FROM files WHERE corpus_id = ? AND status = 'FAILED'",
@@ -261,14 +272,21 @@ async def manage_corpus(request: Request, corpus_id: str):
         "corpus_id": metadata["corpus_id"],
         "description": metadata.get("description", ""),
         "source_path": metadata.get("source_path") or metadata.get("inbox_path", ""),
+        "inbox_path": metadata.get("inbox_path", ""),
         "model": config.get("models", {}).get("answer", {}).get("model", "Default"),
         "provider": config.get("models", {}).get("answer", {}).get("provider", "ollama"),
-        "embedding_preset": config.get("embedding_preset"),
+        "answer_inherited": answer_inherited,
+        "embedding_preset": (
+            config.get("embedding_preset")
+            or ("Inherited from current defaults" if embedding_inherited else "Custom (saved on corpus)")
+        ),
         "embedding_model": embedding_config.get("model", get_config().models.embeddings.model),
         "embedding_provider": embedding_config.get("provider", get_config().models.embeddings.provider),
+        "embedding_inherited": embedding_inherited,
         "chunk_strategy": chunk_config.get("strategy", "pdf_sections"),
         "chunk_max_tokens": chunk_config.get("max_tokens", 700),
         "chunk_overlap_tokens": chunk_config.get("overlap_tokens", 80),
+        "chunking_inherited": chunking_inherited,
         "failed_files": failed_row["count"] if failed_row else 0,
     }
 

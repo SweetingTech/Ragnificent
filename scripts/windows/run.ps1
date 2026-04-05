@@ -45,7 +45,7 @@ function Ensure-Qdrant {
     }
 
     if ($vectorDbUrl -notmatch '^http://(localhost|127\.0\.0\.1):6333/?$') {
-        Write-Host "vector_db.url is '$vectorDbUrl' — assuming external Qdrant and skipping local startup."
+        Write-Host "vector_db.url is '$vectorDbUrl' - assuming external Qdrant and skipping local startup."
         return
     }
 

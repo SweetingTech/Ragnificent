@@ -35,20 +35,47 @@
             <dt>Source Path</dt>
             <dd><code>{{ corpus.source_path }}</code></dd>
 
+            <dt>Inbox Path</dt>
+            <dd><code>{{ corpus.inbox_path }}</code></dd>
+
             <dt>Answer Provider</dt>
-            <dd>{{ corpus.provider }}</dd>
+            <dd>
+                {{ corpus.provider }}
+                {% if corpus.answer_inherited %}
+                <span style="color: var(--text-secondary);">(inherited from current defaults)</span>
+                {% endif %}
+            </dd>
 
             <dt>Agent Model</dt>
-            <dd>{{ corpus.model }}</dd>
+            <dd>
+                {{ corpus.model }}
+                {% if corpus.answer_inherited %}
+                <span style="color: var(--text-secondary);">(not pinned in corpus.yaml)</span>
+                {% endif %}
+            </dd>
 
             <dt>Embedding Preset</dt>
-            <dd>{{ corpus.embedding_preset or "Custom / inherited" }}</dd>
+            <dd>{{ corpus.embedding_preset }}</dd>
 
-            <dt>Embedding Model</dt>
-            <dd>{{ corpus.embedding_provider }} / {{ corpus.embedding_model }}</dd>
+            <dt>Effective Embedding Model</dt>
+            <dd>
+                {{ corpus.embedding_provider }} / {{ corpus.embedding_model }}
+                {% if corpus.embedding_inherited %}
+                <span style="color: var(--text-secondary);">(inherited from current defaults)</span>
+                {% else %}
+                <span style="color: var(--text-secondary);">(saved on corpus)</span>
+                {% endif %}
+            </dd>
 
-            <dt>Chunking</dt>
-            <dd>{{ corpus.chunk_strategy }} · {{ corpus.chunk_max_tokens }} / {{ corpus.chunk_overlap_tokens }}</dd>
+            <dt>Effective Chunking</dt>
+            <dd>
+                {{ corpus.chunk_strategy }} · {{ corpus.chunk_max_tokens }} / {{ corpus.chunk_overlap_tokens }}
+                {% if corpus.chunking_inherited %}
+                <span style="color: var(--text-secondary);">(inherited from current defaults)</span>
+                {% else %}
+                <span style="color: var(--text-secondary);">(saved on corpus)</span>
+                {% endif %}
+            </dd>
 
             <dt>Failed Files</dt>
             <dd>{{ corpus.failed_files }}</dd>
@@ -64,6 +91,11 @@
         <p style="color: var(--text-secondary); font-size: 0.85rem;">
             Retry Failed re-queues only files recorded as failed for this librarian. Vector count updates every 30 seconds.
         </p>
+        {% if corpus.embedding_inherited %}
+        <p style="color: var(--text-secondary); font-size: 0.85rem;">
+            This corpus does not pin its embedding config in <code>corpus.yaml</code>. The effective embedding shown above comes from the current global defaults.
+        </p>
+        {% endif %}
         <div id="ingest-status-panel"
              data-corpus-id="{{ corpus.corpus_id }}"
              style="margin-top: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(2, 6, 23, 0.45);">
