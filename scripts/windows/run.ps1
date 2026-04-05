@@ -4,4 +4,4 @@ Set-Location $ProjectRoot
 Write-Host "Project root: $ProjectRoot"
 
 $env:PYTHONPATH = "."
-python -m app.cli --config config.yaml serve
+python watcher.py

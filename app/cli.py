@@ -30,10 +30,7 @@ def cmd_serve(args):
         "app.api.server:app",
         host=DEFAULT_HOST,
         port=DEFAULT_PORT,
-        reload=True,
-        reload_dirs=["app", "."],
-        reload_includes=["*.py", "*.html", "*.yaml", "*.css"],
-        reload_excludes=["rag_library/*", ".git/*", "*.sqlite", "*.lock", "*.pyc"],
+        reload=False,
     )
 
 
