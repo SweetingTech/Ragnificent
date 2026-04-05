@@ -215,6 +215,12 @@ class QueryEngine:
                 hits = self.vector_service.search(corpus_id, query_vector, limit=initial_k)
             except Exception as e:
                 logger.error(f"Search failed: {e}")
+                return {
+                    "query": query_text,
+                    "hits": [],
+                    "answer": f"Search failed: {e}",
+                    "time": time.time() - start_time
+                }
 
         # 2. Format hits
         formatted_hits = []

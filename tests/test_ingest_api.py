@@ -145,7 +145,7 @@ def test_startup_logs_warning_when_qdrant_is_unreachable(tmp_path, monkeypatch, 
         with TestClient(create_app()) as client:
             response = client.get("/health")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert "Cannot reach Qdrant at http://localhost:6333. Is it running?" in caplog.text
 
 

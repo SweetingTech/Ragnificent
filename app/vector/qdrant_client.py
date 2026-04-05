@@ -278,9 +278,17 @@ class VectorService:
             return []
 
         try:
-            return self.client.search(
-                collection_name=collection_name, query_vector=vector, limit=limit
+            if hasattr(self.client, "search"):
+                return self.client.search(
+                    collection_name=collection_name, query_vector=vector, limit=limit
+                )
+
+            response = self.client.query_points(
+                collection_name=collection_name,
+                query=vector,
+                limit=limit,
             )
+            return list(getattr(response, "points", []) or [])
         except UnexpectedResponse as e:
             logger.error(f"Qdrant search failed for {collection_name}: {e}")
             return []
