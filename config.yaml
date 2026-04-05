@@ -1,46 +1,38 @@
-library_root: "rag_library"
-
-ingest:
-  poll_interval_seconds: 300
-  max_parallel_files: 1
-  lock_file: "rag_library/.locks/ingest.lock"
-  ocr_trigger:
-    min_chars_per_page: 200
-    min_dictionary_word_ratio: 0.35
-
 extraction:
-  pdf_backend: "pymupdf"
   normalize:
     dehyphenate: true
     strip_headers_footers: true
-
-ocr:
-  backend: "ocrmypdf"
-  ocrmypdf:
-    language: "eng"
-    deskew: true
-    rotate_pages: true
-    clean: true
-    cache_dir: "rag_library/cache/ocr"
-
+  pdf_backend: pymupdf
+ingest:
+  lock_file: rag_library/.locks/ingest.lock
+  max_parallel_files: 1
+  ocr_trigger:
+    min_chars_per_page: 200
+    min_dictionary_word_ratio: 0.35
+  poll_interval_seconds: 300
+library_root: rag_library
 models:
+  answer:
+    model: claude-opus-4-6
+    provider: anthropic
   embeddings:
-    provider: "ollama"
-    base_url: "http://localhost:11434"
-    model: "nomic-embed-text"
-  # Uncomment to set a global default answer model (corpora can override individually)
-  # answer:
-  #   provider: "ollama"
-  #   base_url: "http://localhost:11434"
-  #   model: "llama3"
-
-vector_db:
-  backend: "qdrant"
-  url: "http://localhost:6333"
-  collection_prefix: "instance01"
-  vector_size: null   # auto-detect from the embedding model on first ingest
-  on_disk: true
-  hnsw_on_disk: true
-
+    base_url: http://localhost:11434
+    model: nomic-embed-text
+    provider: openrouter
+ocr:
+  backend: ocrmypdf
+  ocrmypdf:
+    cache_dir: rag_library/cache/ocr
+    clean: true
+    deskew: true
+    language: eng
+    rotate_pages: true
 state_db:
-  path: "rag_library/state/ingest.sqlite"
+  path: rag_library/state/ingest.sqlite
+vector_db:
+  backend: qdrant
+  collection_prefix: instance01
+  hnsw_on_disk: true
+  on_disk: true
+  url: http://localhost:6333
+  vector_size: null

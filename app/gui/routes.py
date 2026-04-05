@@ -1,20 +1,21 @@
 """
 GUI routes for the web interface.
-Provides HTML pages for dashboard, search, and corpus management.
 """
+import shutil
+import yaml
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from functools import lru_cache
 from pathlib import Path
 
 from ..config.loader import load_config
 from ..config.schema import GlobalConfig
+from ..config.models_catalog import load_models_catalog
 from ..state.db import Database
 from ..state.stats import StatsService
 from ..vector.qdrant_client import VectorService
-from ..providers.ollama import OllamaLLM
 from ..services.corpus_service import (
     CorpusService,
     validate_corpus_id,
@@ -24,85 +25,77 @@ from ..utils.logging import setup_logging
 
 logger = setup_logging()
 
-# Templates configuration
 templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
 
 router = APIRouter(prefix="/gui", tags=["gui"])
 
+CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
 
-# Dependency injection functions
+# ---------------------------------------------------------------------------
+# Cached singletons — created once per process, reused across requests.
+# This is the main performance fix: QdrantClient and CorpusService are
+# expensive to spin up fresh on every page load.
+# ---------------------------------------------------------------------------
+
 @lru_cache()
 def get_config() -> GlobalConfig:
-    """Get cached configuration."""
     return load_config()
 
 
-def get_database() -> Database:
-    """Get database instance."""
-    config = get_config()
-    return Database(config.get_state_db_path())
-
-
-def get_corpus_service() -> CorpusService:
-    """Get corpus service instance."""
-    config = get_config()
-    return CorpusService(config.library_root)
-
-
-def get_stats_service() -> StatsService:
-    """Get stats service instance with Database."""
-    db = get_database()
-    return StatsService(db)
-
-
+@lru_cache()
 def get_vector_service() -> VectorService:
-    """Get vector service instance."""
     config = get_config()
     return VectorService(config.vector_db.url, config.vector_db.collection_prefix)
 
 
+@lru_cache(maxsize=1)
+def get_models_catalog() -> dict:
+    return load_models_catalog()
+
+
+@lru_cache()
+def get_corpus_service() -> CorpusService:
+    config = get_config()
+    return CorpusService(config.library_root)
+
+
+def get_database() -> Database:
+    config = get_config()
+    return Database(config.get_state_db_path())
+
+
+def get_stats_service() -> StatsService:
+    return StatsService(get_database())
+
+
 def get_corpora_with_vectors(
     corpus_service: CorpusService,
-    vector_service: VectorService
+    vector_service: VectorService,
 ) -> List[Dict[str, Any]]:
-    """
-    Get all corpora with their vector counts.
-
-    Args:
-        corpus_service: Corpus service instance
-        vector_service: Vector service instance
-
-    Returns:
-        List of corpus dictionaries with vector counts
-    """
     corpora = corpus_service.get_all_corpora()
     result = []
     for c in corpora:
-        corpus_data = {
+        result.append({
             "corpus_id": c["corpus_id"],
             "description": c.get("description", ""),
             "inbox_path": c.get("inbox_path", ""),
-            "vector_count": vector_service.get_count(c["corpus_id"])
-        }
-        result.append(corpus_data)
+            "vector_count": vector_service.get_count(c["corpus_id"]),
+        })
     return result
 
 
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    """Render the main dashboard page."""
     config = get_config()
-    corpus_service = get_corpus_service()
-    stats_service = get_stats_service()
-    vector_service = get_vector_service()
-
-    stats = stats_service.get_stats()
-    corpora = get_corpora_with_vectors(corpus_service, vector_service)
-
+    stats = get_stats_service().get_stats()
+    corpora = get_corpora_with_vectors(get_corpus_service(), get_vector_service())
     total_vectors = sum(c.get("vector_count", 0) for c in corpora)
-
-    context = {
+    return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "active_page": "dashboard",
         "total_files": stats["total"],
@@ -110,53 +103,45 @@ async def dashboard(request: Request):
         "failed_count": stats["failed"],
         "total_vectors": total_vectors,
         "vector_backend": config.vector_db.backend,
-        "corpora": corpora
-    }
-    return templates.TemplateResponse("dashboard.html", context)
+        "corpora": corpora,
+    })
 
 
 @router.get("/corpora", response_class=HTMLResponse)
 async def corpora_list(request: Request):
-    """Render the corpora list page."""
-    corpus_service = get_corpus_service()
-    vector_service = get_vector_service()
-
-    context = {
+    return templates.TemplateResponse("corpora.html", {
         "request": request,
         "active_page": "corpora",
-        "corpora": get_corpora_with_vectors(corpus_service, vector_service)
-    }
-    return templates.TemplateResponse("corpora.html", context)
+        "corpora": get_corpora_with_vectors(get_corpus_service(), get_vector_service()),
+    })
 
 
 @router.get("/search", response_class=HTMLResponse)
 async def search_ui(request: Request):
-    """Render the search page."""
     config = get_config()
     corpus_service = get_corpus_service()
-
-    # Fetch available models from Ollama
-    available_models = OllamaLLM.list_models(base_url=config.models.embeddings.base_url)
-    if not available_models:
-        available_models = ["llama3", "mistral"]  # Fallback defaults
-
     corpora = corpus_service.get_all_corpora()
 
-    context = {
+    # Default model name from config (no blocking network call)
+    default_model = "llama3"
+    if config.models.answer:
+        default_model = config.models.answer.model
+    elif config.models.embeddings.provider == "ollama":
+        default_model = "llama3"
+
+    return templates.TemplateResponse("search.html", {
         "request": request,
         "active_page": "search",
         "corpora": corpora,
-        "available_models": available_models
-    }
-    return templates.TemplateResponse("search.html", context)
+        "default_model": default_model,
+    })
 
 
 @router.get("/corpora/new", response_class=HTMLResponse)
 async def new_corpus_ui(request: Request):
-    """Render the create corpus page."""
     return templates.TemplateResponse(
         "create_corpus.html",
-        {"request": request, "active_page": "corpora"}
+        {"request": request, "active_page": "corpora", "models_catalog": get_models_catalog()}
     )
 
 
@@ -166,54 +151,35 @@ async def create_corpus(
     corpus_id: str = Form(...),
     description: str = Form(...),
     source_path: str = Form(...),
-    llm_model: str = Form("llama3")
+    llm_provider: str = Form("ollama"),
+    llm_model: str = Form("llama3"),
+    llm_base_url: str = Form(""),
 ):
-    """
-    Create a new corpus.
-
-    Args:
-        request: FastAPI request object
-        corpus_id: Unique identifier for the corpus
-        description: Human-readable description
-        source_path: Path to source documents
-        llm_model: LLM model to use for this corpus
-
-    Returns:
-        Redirect to dashboard on success
-    """
     corpus_service = get_corpus_service()
     vector_service = get_vector_service()
 
-    # Validate corpus_id using the service
     try:
         validate_corpus_id(corpus_id)
     except CorpusValidationError as e:
-        logger.warning(f"Invalid corpus ID: {corpus_id} - {e}")
         return HTMLResponse(f"Invalid corpus ID: {e}", status_code=400)
 
-    # Validate source_path (basic check - must not be empty)
     if not source_path or not source_path.strip():
         return HTMLResponse("Source path is required", status_code=400)
 
-    # Check if corpus already exists
     if corpus_service.corpus_exists(corpus_id):
         return HTMLResponse(f"Corpus '{corpus_id}' already exists", status_code=400)
 
     try:
-        # Create corpus using the service (handles sanitization)
         corpus_service.create_corpus(
             corpus_id=corpus_id,
             description=description,
             source_path=source_path.strip(),
-            llm_model=llm_model
+            llm_model=llm_model,
+            llm_provider=llm_provider,
         )
-
-        # Create vector collection
         vector_service.ensure_collection(corpus_id)
-
-        logger.info(f"Created new corpus: {corpus_id}")
+        logger.info(f"Created corpus: {corpus_id}")
         return RedirectResponse(url="/gui/dashboard", status_code=303)
-
     except Exception as e:
         logger.error(f"Failed to create corpus {corpus_id}: {e}")
         return HTMLResponse(f"Failed to create corpus: {e}", status_code=500)
@@ -221,47 +187,147 @@ async def create_corpus(
 
 @router.get("/corpora/{corpus_id}", response_class=HTMLResponse)
 async def manage_corpus(request: Request, corpus_id: str):
-    """
-    Render the corpus management page.
-
-    Args:
-        request: FastAPI request object
-        corpus_id: ID of the corpus to manage
-
-    Returns:
-        HTML page for corpus management
-    """
     corpus_service = get_corpus_service()
     vector_service = get_vector_service()
 
-    # Validate corpus_id to prevent path traversal
     try:
         validate_corpus_id(corpus_id)
     except CorpusValidationError as e:
-        logger.warning(f"Invalid corpus ID in URL: {corpus_id}")
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Get corpus metadata using the service
     metadata = corpus_service.get_corpus_metadata(corpus_id)
     if not metadata:
         raise HTTPException(status_code=404, detail="Corpus not found")
 
-    # Get vector count
     v_count = vector_service.get_count(corpus_id)
-
-    # Prepare display data
     config = metadata.get("config", {})
     corpus_data = {
         "corpus_id": metadata["corpus_id"],
         "description": metadata.get("description", ""),
         "source_path": metadata.get("source_path") or metadata.get("inbox_path", ""),
-        "model": config.get("models", {}).get("answer", {}).get("model", "Default")
+        "model": config.get("models", {}).get("answer", {}).get("model", "Default"),
+        "provider": config.get("models", {}).get("answer", {}).get("provider", "ollama"),
     }
 
-    context = {
+    return templates.TemplateResponse("manage_corpus.html", {
         "request": request,
         "active_page": "corpora",
         "corpus": corpus_data,
-        "vector_count": v_count
+        "vector_count": v_count,
+    })
+
+
+@router.post("/corpora/{corpus_id}/delete")
+async def delete_corpus(request: Request, corpus_id: str):
+    """Delete a corpus: Qdrant collection + SQLite records + directory."""
+    corpus_service = get_corpus_service()
+    vector_service = get_vector_service()
+    db = get_database()
+
+    try:
+        validate_corpus_id(corpus_id)
+    except CorpusValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not corpus_service.corpus_exists(corpus_id):
+        raise HTTPException(status_code=404, detail="Corpus not found")
+
+    # Drop Qdrant collection
+    vector_service.delete_collection(corpus_id)
+
+    # Clean up SQLite
+    try:
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM chunks WHERE corpus_id = ?", (corpus_id,))
+            conn.execute("DELETE FROM files WHERE corpus_id = ?", (corpus_id,))
+    except Exception as e:
+        logger.warning(f"SQLite cleanup failed for {corpus_id}: {e}")
+
+    # Remove directory
+    corpus_path = corpus_service.get_corpus_path(corpus_id)
+    try:
+        shutil.rmtree(corpus_path)
+        logger.info(f"Deleted corpus '{corpus_id}'")
+    except Exception as e:
+        logger.error(f"Failed to remove corpus directory: {e}")
+        return HTMLResponse(f"Partial delete — directory removal failed: {e}", status_code=500)
+
+    return RedirectResponse(url="/gui/corpora", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_ui(request: Request):
+    config = get_config()
+    embed = config.models.embeddings
+    answer = config.models.answer
+
+    # Check which API keys are present in env
+    import os
+    env_keys = {
+        "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
+        "ANTHROPIC_API_KEY": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "OPENROUTER_API_KEY": bool(os.getenv("OPENROUTER_API_KEY")),
     }
-    return templates.TemplateResponse("manage_corpus.html", context)
+
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "active_page": "settings",
+        "embed_provider": embed.provider,
+        "embed_base_url": embed.base_url or "",
+        "embed_model": embed.model,
+        "answer_provider": answer.provider if answer else "ollama",
+        "answer_base_url": (answer.base_url or "") if answer else "",
+        "answer_model": answer.model if answer else "llama3",
+        "env_keys": env_keys,
+        "models_catalog": get_models_catalog(),
+    })
+
+
+@router.post("/settings/save")
+async def settings_save(
+    request: Request,
+    embed_provider: str = Form(...),
+    embed_base_url: str = Form(""),
+    embed_model: str = Form(...),
+    answer_provider: str = Form(...),
+    answer_base_url: str = Form(""),
+    answer_model: str = Form(...),
+):
+    """Write model settings back to config.yaml."""
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            raw = yaml.safe_load(f)
+
+        raw.setdefault("models", {})
+        raw["models"]["embeddings"] = {
+            "provider": embed_provider.strip(),
+            "model": embed_model.strip(),
+        }
+        if embed_base_url.strip():
+            raw["models"]["embeddings"]["base_url"] = embed_base_url.strip()
+
+        raw["models"]["answer"] = {
+            "provider": answer_provider.strip(),
+            "model": answer_model.strip(),
+        }
+        if answer_base_url.strip():
+            raw["models"]["answer"]["base_url"] = answer_base_url.strip()
+
+        with open(CONFIG_PATH, "w") as f:
+            yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+
+        # Clear cached config so next request reloads it
+        get_config.cache_clear()
+        get_vector_service.cache_clear()
+        get_corpus_service.cache_clear()
+
+        logger.info("Settings saved; config cache cleared.")
+    except Exception as e:
+        logger.error(f"Failed to save settings: {e}")
+        return HTMLResponse(f"Failed to save settings: {e}", status_code=500)
+
+    return RedirectResponse(url="/gui/settings?saved=1", status_code=303)

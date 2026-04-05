@@ -62,7 +62,8 @@ def get_embedder() -> EmbeddingProvider:
     return get_embedding_provider(
         config.models.embeddings.provider,
         config.models.embeddings.base_url,
-        config.models.embeddings.model
+        config.models.embeddings.model,
+        config.models.embeddings.api_key,
     )
 
 
@@ -75,14 +76,15 @@ def get_default_llm() -> Optional[LLMProvider]:
             return get_llm_provider(
                 config.models.answer.provider,
                 config.models.answer.base_url,
-                config.models.answer.model
+                config.models.answer.model,
+                config.models.answer.api_key,
             )
         else:
-            # Fall back to using embedding provider's base_url with default model
+            # Fall back to ollama on same host as embeddings
             return get_llm_provider(
                 "ollama",
                 config.models.embeddings.base_url,
-                "llama3"
+                "llama3",
             )
     except Exception as e:
         logger.warning(f"Failed to initialize default LLM: {e}")

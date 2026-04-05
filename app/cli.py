@@ -24,7 +24,8 @@ def cmd_serve(args):
         "app.api.server:app",
         host=DEFAULT_HOST,
         port=DEFAULT_PORT,
-        reload=True
+        reload=True,
+        reload_dirs=["app"],
     )
 
 

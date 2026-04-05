@@ -8,13 +8,19 @@
         <h2>Librarian: {{ corpus.corpus_id }}</h2>
         <p style="color: var(--text-secondary);">{{ corpus.description }}</p>
     </div>
-    <div class="col-4" style="text-align: right;">
-        <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}" 
+    <div class="col-4" style="text-align: right; display: flex; gap: 0.75rem; justify-content: flex-end;">
+        <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}"
                 hx-swap="none"
                 class="btn btn-primary"
                 onclick="alert('Sync started...');">
             Sync Files Now
         </button>
+        <form method="POST" action="/gui/corpora/{{ corpus.corpus_id }}/delete"
+              onsubmit="return confirm('Permanently delete librarian \'{{ corpus.corpus_id }}\' and all its vectors? This cannot be undone.');">
+            <button type="submit" class="btn" style="background: var(--error, #c0392b); color: white; border-color: transparent;">
+                Delete
+            </button>
+        </form>
     </div>
 </div>
 
@@ -24,23 +30,28 @@
         <dl>
             <dt>Source Path</dt>
             <dd><code>{{ corpus.source_path }}</code></dd>
-            
+
+            <dt>Answer Provider</dt>
+            <dd>{{ corpus.provider }}</dd>
+
             <dt>Agent Model</dt>
             <dd>{{ corpus.model }}</dd>
-            
+
             <dt>Vector Count</dt>
             <dd>{{ vector_count }}</dd>
         </dl>
     </div>
-    
+
     <div class="card">
         <h3>Ingest Status</h3>
-        <!-- TODO: Show last run time or errors -->
         <p>Syncing scans the source folder for new or changed files.</p>
+        <p style="color: var(--text-secondary); font-size: 0.85rem;">
+            Vector count updates every 30 seconds — refresh to see latest after a sync.
+        </p>
     </div>
 </div>
 
 <div style="margin-top: 2rem;">
-    <a href="/gui/dashboard" class="btn">Back to Dashboard</a>
+    <a href="/gui/corpora" class="btn">Back to Corpora</a>
 </div>
 {% endblock %}

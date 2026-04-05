@@ -30,25 +30,7 @@ if (-not (Test-Path "ingest")) {
     Write-Host "Created ingest/ (drop files here for general ingestion)"
 }
 
-# Create corpus.yaml for the named corpora
-$Corpora = @("cyber_blue", "writing_red", "dm_green")
-foreach ($Corpus in $Corpora) {
-    $Path = "$LibraryRoot/corpora/$Corpus/corpus.yaml"
-    if (-not (Test-Path $Path)) {
-        $Content = @"
-corpus_id: $Corpus
-description: "Content for $Corpus"
-retain_on_missing: true
-chunking:
-  default:
-    strategy: "pdf_sections"
-    max_tokens: 700
-    overlap_tokens: 80
-"@
-        Set-Content -Path $Path -Value $Content
-        Write-Host "Created defaults for $Corpus"
-    }
-}
+# No default corpora created — use the web UI at /gui/corpora/new to create your own.
 
 # Create general corpus if missing
 $GeneralPath = "$LibraryRoot/corpora/general/corpus.yaml"
@@ -78,8 +60,8 @@ models:
 
 # Install dependencies
 if (Test-Path "pyproject.toml") {
-    Write-Host "Installing dependencies..."
-    pip install .
+    Write-Host "Installing dependencies (editable mode)..."
+    pip install -e .
 }
 
 Write-Host "Setup complete."

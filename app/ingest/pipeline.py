@@ -87,9 +87,10 @@ class IngestionPipeline:
 
         # Initialize embedding provider from config
         self.embedder = get_embedding_provider(
-            name=config.models.embeddings.provider,
-            base_url=config.models.embeddings.base_url,
-            model=config.models.embeddings.model
+            config.models.embeddings.provider,
+            config.models.embeddings.base_url,
+            config.models.embeddings.model,
+            config.models.embeddings.api_key,
         )
 
         # Chunker registry

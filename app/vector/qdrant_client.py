@@ -3,11 +3,12 @@ Qdrant vector database service for storing and searching document embeddings.
 """
 
 from collections import deque
+import time
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from ..utils.logging import setup_logging
 
 logger = setup_logging()
@@ -60,6 +61,8 @@ class VectorService:
         self.client = QdrantClient(url=url)
         self.prefix = collection_prefix
         self._collection_cache: Dict[str, bool] = {}
+        self._count_cache: Dict[str, Tuple[int, float]] = {}
+        self._count_ttl: float = 30.0  # seconds
 
     def _get_collection_name(self, corpus_id: str) -> str:
         """
@@ -210,6 +213,7 @@ class VectorService:
         try:
             self.client.upsert(collection_name=collection_name, points=points)
             logger.info(f"Upserted {len(points)} chunks to {collection_name}")
+            self._count_cache.pop(corpus_id, None)  # invalidate cached count
         except Exception as e:
             logger.error(f"Failed to upsert chunks to {collection_name}: {e}")
             raise
@@ -245,6 +249,7 @@ class VectorService:
                 ),
             )
             logger.info(f"Deleted chunks for file {file_hash} in {collection_name}")
+            self._count_cache.pop(corpus_id, None)  # invalidate cached count
         except Exception as e:
             logger.error(
                 f"Failed to delete chunks for {file_hash} in {collection_name}: {e}"
@@ -286,6 +291,7 @@ class VectorService:
     def get_count(self, corpus_id: str) -> int:
         """
         Get the number of vectors in a collection.
+        Results are cached for _count_ttl seconds to avoid hammering Qdrant on every page load.
 
         Args:
             corpus_id: The corpus identifier
@@ -293,17 +299,44 @@ class VectorService:
         Returns:
             Number of vectors, or 0 if collection doesn't exist
         """
-        collection_name = self._get_collection_name(corpus_id)
+        now = time.monotonic()
+        cached = self._count_cache.get(corpus_id)
+        if cached is not None:
+            count, ts = cached
+            if now - ts < self._count_ttl:
+                return count
 
+        collection_name = self._get_collection_name(corpus_id)
         if not self.collection_exists(corpus_id):
+            self._count_cache[corpus_id] = (0, now)
             return 0
 
         try:
             info = self.client.get_collection(collection_name)
-            return info.points_count
+            result = info.points_count or 0
         except Exception as e:
             logger.warning(f"Failed to get count for {collection_name}: {e}")
-            return 0
+            result = 0
+
+        self._count_cache[corpus_id] = (result, now)
+        return result
+
+    def delete_collection(self, corpus_id: str) -> None:
+        """
+        Delete the Qdrant collection for a corpus entirely.
+
+        Args:
+            corpus_id: The corpus identifier
+        """
+        collection_name = self._get_collection_name(corpus_id)
+        try:
+            self.client.delete_collection(collection_name)
+            logger.info(f"Deleted collection {collection_name}")
+        except Exception as e:
+            logger.warning(f"Could not delete collection {collection_name}: {e}")
+        finally:
+            self._collection_cache.pop(collection_name, None)
+            self._count_cache.pop(corpus_id, None)
 
     def invalidate_cache(self, corpus_id: Optional[str] = None) -> None:
         """

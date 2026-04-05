@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Ragnificent{% endblock %}
+
+{% block content %}
+<h2>Settings</h2>
+
+{% if request.query_params.get('saved') %}
+<div class="card" style="border-left: 4px solid var(--accent); margin-bottom: 1rem;">
+    Settings saved. Restart the server (stop.ps1 then run.ps1) for changes to take full effect.
+</div>
+{% endif %}
+
+<form action="/gui/settings/save" method="POST" id="settings-form">
+    <!-- Hidden fields that JS populates before submit -->
+    <input type="hidden" name="embed_model" id="embed_model_hidden">
+    <input type="hidden" name="answer_model" id="answer_model_hidden">
+
+    <!-- Embedding Model -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h3>Embedding Model</h3>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+            Converts documents and queries into vectors.
+            <strong>Changing this requires re-ingesting all corpora</strong> — vector dimensions must match.
+        </p>
+
+        <label>Provider</label>
+        <select name="embed_provider" id="embed_provider" onchange="populateEmbedModels(null)">
+            <option value="ollama"     {% if embed_provider == 'ollama'     %}selected{% endif %}>Ollama (Local / LAN)</option>
+            <option value="openai"     {% if embed_provider == 'openai'     %}selected{% endif %}>OpenAI</option>
+            <option value="openrouter" {% if embed_provider == 'openrouter' %}selected{% endif %}>OpenRouter</option>
+        </select>
+
+        <label style="margin-top: 1rem;">Model</label>
+        <select id="embed_model_select" onchange="onEmbedModelChange()"></select>
+        <input type="text" id="embed_model_custom" placeholder="Enter model ID"
+               style="display:none; margin-top: 0.5rem;">
+        <small id="embed_model_note" style="color: var(--text-secondary); display:block;
+               margin-top: 0.25rem; margin-bottom: 1rem;"></small>
+
+        <label>Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional — leave blank for provider default)</span></label>
+        <input type="text" name="embed_base_url" value="{{ embed_base_url }}"
+               placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
+    </div>
+
+    <!-- Answer / LLM Model -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h3>Answer / LLM Model</h3>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+            Generates answers from retrieved context. Individual corpora can override this.
+        </p>
+
+        <label>Provider</label>
+        <select name="answer_provider" id="answer_provider" onchange="populateAnswerModels(null)">
+            <option value="ollama"     {% if answer_provider == 'ollama'     %}selected{% endif %}>Ollama (Local / LAN)</option>
+            <option value="openai"     {% if answer_provider == 'openai'     %}selected{% endif %}>OpenAI (ChatGPT)</option>
+            <option value="anthropic"  {% if answer_provider == 'anthropic'  %}selected{% endif %}>Anthropic (Claude)</option>
+            <option value="openrouter" {% if answer_provider == 'openrouter' %}selected{% endif %}>OpenRouter</option>
+        </select>
+
+        <label style="margin-top: 1rem;">Model</label>
+        <select id="answer_model_select" onchange="onAnswerModelChange()"></select>
+        <input type="text" id="answer_model_custom" placeholder="Enter model ID"
+               style="display:none; margin-top: 0.5rem;">
+        <small id="answer_model_note" style="color: var(--text-secondary); display:block;
+               margin-top: 0.25rem; margin-bottom: 1rem;"></small>
+
+        <label>Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional)</span></label>
+        <input type="text" name="answer_base_url" value="{{ answer_base_url }}"
+               placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
+    </div>
+
+    <!-- API Key Status -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h3>API Keys</h3>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+            API keys are read from environment variables — set them in your <code>.env</code> file in the project root.
+        </p>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+                    <th style="padding: 0.4rem 0.75rem;">Variable</th>
+                    <th style="padding: 0.4rem 0.75rem;">Provider</th>
+                    <th style="padding: 0.4rem 0.75rem;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for var, present in env_keys.items() %}
+                <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 0.4rem 0.75rem;"><code>{{ var }}</code></td>
+                    <td style="padding: 0.4rem 0.75rem;">
+                        {% if var == 'OPENAI_API_KEY' %}OpenAI
+                        {% elif var == 'ANTHROPIC_API_KEY' %}Anthropic (Claude)
+                        {% elif var == 'OPENROUTER_API_KEY' %}OpenRouter
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.4rem 0.75rem;">
+                        {% if present %}<span style="color: #27ae60;">&#10003; Set</span>
+                        {% else %}<span style="color: var(--text-secondary);">Not set</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div style="text-align: right;">
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+    </div>
+</form>
+
+<script>
+const CATALOG = {{ models_catalog | tojson }};
+const SAVED_EMBED_MODEL  = "{{ embed_model }}";
+const SAVED_ANSWER_MODEL = "{{ answer_model }}";
+
+function buildOptions(role, provider, currentValue) {
+    const models = ((CATALOG[role] || {})[provider] || {}).models || [];
+    let html = "";
+    let found = false;
+    for (const m of models) {
+        const sel = m.id === currentValue ? " selected" : "";
+        if (sel) found = true;
+        const note = (m.notes || "").replace(/"/g, "&quot;");
+        html += `<option value="${m.id}"${sel} title="${note}">${m.display_name}</option>`;
+    }
+    if (!found && currentValue) {
+        html += `<option value="${currentValue}" selected>${currentValue} (current)</option>`;
+    }
+    html += `<option value="__other__">Other (type below)…</option>`;
+    return html;
+}
+
+function populateEmbedModels(currentValue) {
+    const provider = document.getElementById("embed_provider").value;
+    const sel = document.getElementById("embed_model_select");
+    sel.innerHTML = buildOptions("embedding", provider, currentValue !== null ? currentValue : sel.value);
+    onEmbedModelChange();
+}
+
+function onEmbedModelChange() {
+    const sel      = document.getElementById("embed_model_select");
+    const custom   = document.getElementById("embed_model_custom");
+    const note     = document.getElementById("embed_model_note");
+    const hidden   = document.getElementById("embed_model_hidden");
+    if (sel.value === "__other__") {
+        custom.style.display = "";
+        custom.required = true;
+        note.textContent = "";
+        hidden.value = "";
+    } else {
+        custom.style.display = "none";
+        custom.required = false;
+        hidden.value = sel.value;
+        const provider = document.getElementById("embed_provider").value;
+        const models = ((CATALOG["embedding"] || {})[provider] || {}).models || [];
+        const entry = models.find(m => m.id === sel.value);
+        note.textContent = entry ? entry.notes : "";
+    }
+}
+
+function populateAnswerModels(currentValue) {
+    const provider = document.getElementById("answer_provider").value;
+    const sel = document.getElementById("answer_model_select");
+    sel.innerHTML = buildOptions("llm", provider, currentValue !== null ? currentValue : sel.value);
+    onAnswerModelChange();
+}
+
+function onAnswerModelChange() {
+    const sel      = document.getElementById("answer_model_select");
+    const custom   = document.getElementById("answer_model_custom");
+    const note     = document.getElementById("answer_model_note");
+    const hidden   = document.getElementById("answer_model_hidden");
+    if (sel.value === "__other__") {
+        custom.style.display = "";
+        custom.required = true;
+        note.textContent = "";
+        hidden.value = "";
+    } else {
+        custom.style.display = "none";
+        custom.required = false;
+        hidden.value = sel.value;
+        const provider = document.getElementById("answer_provider").value;
+        const models = ((CATALOG["llm"] || {})[provider] || {}).models || [];
+        const entry = models.find(m => m.id === sel.value);
+        note.textContent = entry ? entry.notes : "";
+    }
+}
+
+document.getElementById("settings-form").addEventListener("submit", function() {
+    const embedSel    = document.getElementById("embed_model_select");
+    const embedCustom = document.getElementById("embed_model_custom");
+    const embedHidden = document.getElementById("embed_model_hidden");
+    if (embedSel.value === "__other__") embedHidden.value = embedCustom.value.trim();
+
+    const answerSel    = document.getElementById("answer_model_select");
+    const answerCustom = document.getElementById("answer_model_custom");
+    const answerHidden = document.getElementById("answer_model_hidden");
+    if (answerSel.value === "__other__") answerHidden.value = answerCustom.value.trim();
+});
+
+// Populate on page load with currently saved values
+populateEmbedModels(SAVED_EMBED_MODEL);
+populateAnswerModels(SAVED_ANSWER_MODEL);
+</script>
+{% endblock %}

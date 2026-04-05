@@ -119,8 +119,9 @@ class QueryEngine:
                 if answer_config:
                     provider = answer_config.get("provider", "ollama")
                     model = answer_config.get("model", "llama3")
-                    base_url = answer_config.get("base_url", self.base_url)
-                    return get_llm_provider(provider, base_url=base_url, model=model)
+                    base_url = answer_config.get("base_url") or self.base_url
+                    api_key = answer_config.get("api_key")
+                    return get_llm_provider(provider, base_url=base_url, model=model, api_key=api_key)
             except Exception as e:
                 logger.warning(f"Failed to load corpus LLM config for {corpus_id}: {e}")
 

@@ -31,22 +31,24 @@ class OcrConfig(BaseModel):
 
 class EmbeddingsConfig(BaseModel):
     provider: str
-    base_url: str
+    base_url: Optional[str] = None  # defaults per provider if omitted
     model: str
+    api_key: Optional[str] = None   # prefer env vars; stored here only as override
 
 
 class AnswerModelConfig(BaseModel):
     """Configuration for the default answer/LLM model."""
     provider: str = "ollama"
-    base_url: str = "http://localhost:11434"
+    base_url: Optional[str] = None  # defaults per provider if omitted
     model: str = "llama3"
+    api_key: Optional[str] = None   # prefer env vars; stored here only as override
 
 
 class RerankConfig(BaseModel):
     """Configuration for the reranker."""
     enabled: bool = False
     provider: str = "ollama"
-    base_url: str = "http://localhost:11434"
+    base_url: Optional[str] = None
     model: str = "llama3"
 
 
@@ -81,12 +83,10 @@ class GlobalConfig(BaseModel):
 
     def get_state_db_path(self) -> str:
         """Get the state database path, with fallback logic."""
-        # Priority: env var > config > derived from library_root
         if os.getenv("STATE_DB_PATH"):
             return os.getenv("STATE_DB_PATH")
         if self.state_db and self.state_db.path:
             return self.state_db.path
-        # Fallback: derive from library_root
         return str(Path(self.library_root) / "state" / "ingest.sqlite")
 
     def get_corpora_path(self) -> str:

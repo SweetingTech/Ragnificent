@@ -9,11 +9,14 @@
         Point to a local folder to create a dedicated RAG database and agent.
     </p>
 
-    <form action="/gui/corpora/create" method="POST" class="card">
+    <form action="/gui/corpora/create" method="POST" class="card" id="create-form">
+        <!-- Hidden field JS populates before submit -->
+        <input type="hidden" name="llm_model" id="llm_model_hidden">
+
         <label>Librarian Name (ID)</label>
-        <input type="text" name="corpus_id" placeholder="e.g. engineering_docs" pattern="[a-zA-Z0-9_]+" required>
+        <input type="text" name="corpus_id" placeholder="e.g. engineering_docs" pattern="[a-zA-Z0-9_-]+" required>
         <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
-            Only letters, numbers, and underscores. Used for database collection name.
+            Letters, numbers, hyphens, underscores only.
         </small>
 
         <label>Description</label>
@@ -25,16 +28,26 @@
             Files in this folder will be monitored and ingested.
         </small>
 
-        <label>Agent Model (Librarian Persona)</label>
-        <select name="llm_model" required>
-            <option value="llama3" selected>Llama 3 (General)</option>
-            <option value="codellama">CodeLlama (Programming)</option>
-            <option value="mistral">Mistral (Fast)</option>
-            <option value="phi3">Phi-3 (Efficient)</option>
-            <option value="gemma">Gemma (Google)</option>
+        <label>Answer Provider</label>
+        <select name="llm_provider" id="llm_provider" onchange="populateLlmModels(null)">
+            <option value="ollama">Ollama (Local / LAN)</option>
+            <option value="openai">OpenAI (ChatGPT)</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openrouter">OpenRouter</option>
         </select>
+
+        <label style="margin-top: 1rem;">Model</label>
+        <select id="llm_model_select" onchange="onModelChange()"></select>
+        <input type="text" id="llm_model_custom" placeholder="Enter model ID"
+               style="display:none; margin-top: 0.5rem;">
+        <small id="model_note" style="color: var(--text-secondary); display:block;
+               margin-top: 0.25rem; margin-bottom: 1rem;"></small>
+
+        <label>Custom Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional)</span></label>
+        <input type="text" name="llm_base_url" placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
         <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
-            Select the AI model that will answer questions for this library.
+            Leave blank to use the provider default.
+            API keys are read from <code>.env</code> — see <a href="/gui/settings">Settings</a> for status.
         </small>
 
         <div style="margin-top: 1.5rem; text-align: right;">
@@ -43,4 +56,62 @@
         </div>
     </form>
 </div>
+
+<script>
+const CATALOG = {{ models_catalog | tojson }};
+
+function buildOptions(provider) {
+    const models = ((CATALOG["llm"] || {})[provider] || {}).models || [];
+    let html = "";
+    for (const m of models) {
+        const note = (m.notes || "").replace(/"/g, "&quot;");
+        html += `<option value="${m.id}" title="${note}">${m.display_name}</option>`;
+    }
+    html += `<option value="__other__">Other (type below)…</option>`;
+    return html;
+}
+
+function populateLlmModels(currentValue) {
+    const provider = document.getElementById("llm_provider").value;
+    const sel = document.getElementById("llm_model_select");
+    sel.innerHTML = buildOptions(provider);
+    if (currentValue) {
+        const opt = [...sel.options].find(o => o.value === currentValue);
+        if (opt) sel.value = currentValue;
+    }
+    onModelChange();
+}
+
+function onModelChange() {
+    const sel    = document.getElementById("llm_model_select");
+    const custom = document.getElementById("llm_model_custom");
+    const note   = document.getElementById("model_note");
+    const hidden = document.getElementById("llm_model_hidden");
+
+    if (sel.value === "__other__") {
+        custom.style.display = "";
+        custom.required = true;
+        note.textContent = "";
+        hidden.value = "";
+    } else {
+        custom.style.display = "none";
+        custom.required = false;
+        hidden.value = sel.value;
+        const provider = document.getElementById("llm_provider").value;
+        const models = ((CATALOG["llm"] || {})[provider] || {}).models || [];
+        const entry = models.find(m => m.id === sel.value);
+        note.textContent = entry ? entry.notes : "";
+    }
+}
+
+document.getElementById("create-form").addEventListener("submit", function() {
+    const sel    = document.getElementById("llm_model_select");
+    const custom = document.getElementById("llm_model_custom");
+    const hidden = document.getElementById("llm_model_hidden");
+    if (sel.value === "__other__") hidden.value = custom.value.trim();
+});
+
+// Populate on load with Ollama as the default provider
+populateLlmModels(null);
+</script>
 {% endblock %}

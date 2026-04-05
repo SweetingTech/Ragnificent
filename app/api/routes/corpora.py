@@ -3,7 +3,7 @@ Corpora API routes — agent-facing endpoints for discovering and managing RAG d
 
 Designed for programmatic access by AI agents and other clients.
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
@@ -14,6 +14,7 @@ from ...config.loader import load_config
 from ...config.schema import GlobalConfig
 from ...services.corpus_service import CorpusService, CorpusValidationError, validate_corpus_id
 from ...vector.qdrant_client import VectorService
+from ...state.db import Database
 from ...utils.logging import setup_logging
 
 logger = setup_logging()
@@ -67,6 +68,11 @@ def get_corpus_service() -> CorpusService:
 def get_vector_service() -> VectorService:
     config = get_config()
     return VectorService(config.vector_db.url, config.vector_db.collection_prefix)
+
+
+def get_database() -> Database:
+    config = get_config()
+    return Database(config.get_state_db_path())
 
 
 def _build_summary(corpus_meta: Dict, vector_service: VectorService) -> CorpusSummary:
@@ -201,3 +207,45 @@ async def create_corpus(
         ),
         query_endpoint="/api/query",
     )
+
+
+@router.delete("/{corpus_id}", status_code=204)
+async def delete_corpus(
+    corpus_id: str,
+    corpus_service: CorpusService = Depends(get_corpus_service),
+    vector_service: VectorService = Depends(get_vector_service),
+    db: Database = Depends(get_database),
+):
+    """
+    Permanently delete a corpus: removes the Qdrant collection, all SQLite records,
+    and the corpus directory on disk. This cannot be undone.
+    """
+    try:
+        validate_corpus_id(corpus_id)
+    except CorpusValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not corpus_service.corpus_exists(corpus_id):
+        raise HTTPException(status_code=404, detail=f"Corpus '{corpus_id}' not found")
+
+    # 1. Drop Qdrant collection
+    vector_service.delete_collection(corpus_id)
+
+    # 2. Delete SQLite records for this corpus
+    try:
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM chunks WHERE corpus_id = ?", (corpus_id,))
+            conn.execute("DELETE FROM files WHERE corpus_id = ?", (corpus_id,))
+    except Exception as e:
+        logger.warning(f"Failed to clean up SQLite records for {corpus_id}: {e}")
+
+    # 3. Remove the corpus directory
+    corpus_path = corpus_service.get_corpus_path(corpus_id)
+    try:
+        shutil.rmtree(corpus_path)
+        logger.info(f"Deleted corpus '{corpus_id}'")
+    except Exception as e:
+        logger.error(f"Failed to remove corpus directory for {corpus_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Corpus data deleted but directory removal failed: {e}")
+
+    return Response(status_code=204)
