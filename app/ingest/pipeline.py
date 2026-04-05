@@ -2,7 +2,7 @@
 Document ingestion pipeline for processing and indexing documents.
 Handles file scanning, extraction, chunking, embedding, and storage.
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 import os
 import glob
 import time
@@ -29,6 +29,19 @@ SUPPORTED_EXTENSIONS = [
     '**/*.pres', '**/*.pdf', '**/*.md', '**/*.txt', '**/*.py',
     '**/*.epub', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.tiff'
 ]
+DEFAULT_PROVIDER_BASE_URLS = {
+    "ollama": "http://localhost:11434",
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
+CHUNK_STRATEGY_ALIASES = {
+    "heading_then_paragraph": "markdown",
+    "markdown": "markdown",
+    "paragraph_sections": "pdf_sections",
+    "pdf_sections": "pdf_sections",
+    "code_symbols": "code_symbols",
+}
 
 
 class IngestionPipeline:
@@ -93,14 +106,6 @@ class IngestionPipeline:
             config.models.embeddings.api_key,
         )
 
-        # Chunker registry
-        self.chunkers = {
-            "pdf_sections": PdfSectionChunker(),
-            "code_symbols": CodeSymbolChunker(),
-            "markdown": MarkdownChunker(),
-            "default": PdfSectionChunker()
-        }
-
     def _get_corpora(self, corpus_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get corpora to process.
@@ -151,7 +156,97 @@ class IngestionPipeline:
             files.extend(found)
         return files
 
-    def run_once(self, corpus_id: Optional[str] = None, source_path_override: Optional[str] = None) -> Dict[str, Any]:
+    def _get_failed_files(self, corpus_id: str) -> List[str]:
+        """Return existing failed file paths for a corpus."""
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT file_path
+                FROM files
+                WHERE corpus_id = ? AND status = 'FAILED'
+                ORDER BY updated_at DESC
+                """,
+                (corpus_id,),
+            )
+            rows = cursor.fetchall()
+
+        failed_paths = []
+        missing_count = 0
+        for row in rows:
+            path = row["file_path"]
+            if path and os.path.exists(path):
+                failed_paths.append(path)
+            else:
+                missing_count += 1
+        if missing_count:
+            logger.warning(
+                f"Skipped {missing_count} missing failed-file entries while retrying corpus {corpus_id}"
+            )
+        return failed_paths
+
+    def _get_embedding_settings(self, corpus_config: Dict[str, Any]) -> Dict[str, Any]:
+        embedding_config = corpus_config.get("models", {}).get("embeddings", {})
+        provider = embedding_config.get("provider", self.config.models.embeddings.provider)
+        model = embedding_config.get("model", self.config.models.embeddings.model)
+        base_url = (
+            embedding_config.get("base_url")
+            or DEFAULT_PROVIDER_BASE_URLS.get(provider, self.config.models.embeddings.base_url)
+        )
+        api_key = embedding_config.get("api_key", self.config.models.embeddings.api_key)
+        return {
+            "provider": provider,
+            "model": model,
+            "base_url": base_url,
+            "api_key": api_key,
+        }
+
+    def _get_embedder_for_corpus(self, corpus_config: Dict[str, Any]):
+        settings = self._get_embedding_settings(corpus_config)
+        if (
+            settings["provider"] == self.config.models.embeddings.provider
+            and settings["model"] == self.config.models.embeddings.model
+            and settings["base_url"] == self.config.models.embeddings.base_url
+            and settings["api_key"] == self.config.models.embeddings.api_key
+        ):
+            return self.embedder
+        return get_embedding_provider(
+            settings["provider"],
+            settings["base_url"],
+            settings["model"],
+            settings["api_key"],
+        )
+
+    def _get_chunker(self, file_ext: str, corpus_config: Dict[str, Any]):
+        chunk_defaults = corpus_config.get("chunking", {}).get("default", {})
+        strategy_name = chunk_defaults.get("strategy", "pdf_sections")
+        strategy = CHUNK_STRATEGY_ALIASES.get(strategy_name, "pdf_sections")
+        max_tokens = int(chunk_defaults.get("max_tokens", 700))
+        overlap_tokens = int(chunk_defaults.get("overlap_tokens", 80))
+
+        if strategy == "code_symbols":
+            return CodeSymbolChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        if strategy == "markdown":
+            return MarkdownChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        if file_ext == ".py":
+            return CodeSymbolChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        return PdfSectionChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+
+    def _emit_progress(
+        self,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]],
+        payload: Dict[str, Any],
+    ) -> None:
+        """Send a progress update if the caller provided a callback."""
+        if progress_callback:
+            progress_callback(payload)
+
+    def run_once(
+        self,
+        corpus_id: Optional[str] = None,
+        source_path_override: Optional[str] = None,
+        retry_failed_only: bool = False,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         """
         Run a single ingestion pass.
 
@@ -161,19 +256,26 @@ class IngestionPipeline:
                                   source/inbox path.  Can be any absolute or relative path
                                   accessible to the server (e.g. "D:/Books").
                                   Requires corpus_id to be set.
+            progress_callback: Optional callback invoked with status updates.
 
         Returns:
             Summary of the ingestion run
         """
-        logger.info(f"Starting ingestion run (corpus={corpus_id or 'all'}, source_override={source_path_override})...")
+        logger.info(
+            f"Starting ingestion run (corpus={corpus_id or 'all'}, "
+            f"source_override={source_path_override}, retry_failed_only={retry_failed_only})..."
+        )
 
         corpora = self._get_corpora(corpus_id)
         summary = {
             "corpora_processed": 0,
+            "total_files": 0,
+            "files_completed": 0,
             "files_processed": 0,
             "files_skipped": 0,
-            "files_failed": 0
+            "files_failed": 0,
         }
+        queued_corpora = []
 
         for corpus in corpora:
             cid = corpus['id']
@@ -187,11 +289,60 @@ class IngestionPipeline:
                 logger.warning(f"Path does not exist: {scan_path}")
                 continue
 
-            files = self._scan_files(scan_path)
+            files = self._get_failed_files(cid) if retry_failed_only else self._scan_files(scan_path)
             logger.info(f"Found {len(files)} candidates.")
+            summary["total_files"] += len(files)
+            queued_corpora.append({
+                "id": cid,
+                "scan_path": scan_path,
+                "files": files,
+                "config": corpus["config"],
+            })
+
+        self._emit_progress(progress_callback, {
+            "status": "running",
+            "corpora_total": len(queued_corpora),
+            "corpora_processed": 0,
+            "total_files": summary["total_files"],
+            "files_completed": 0,
+            "files_processed": 0,
+            "files_skipped": 0,
+            "files_failed": 0,
+            "percent_complete": 0.0,
+            "current_corpus": queued_corpora[0]["id"] if queued_corpora else None,
+            "current_file": None,
+            "message": (
+                f"Queued {summary['total_files']} failed files for retry."
+                if retry_failed_only
+                else f"Queued {summary['total_files']} files for ingestion."
+            ),
+        })
+
+        for corpus in queued_corpora:
+            cid = corpus["id"]
+            files = corpus["files"]
+            corpus_config = corpus["config"]
+            embedder = self._get_embedder_for_corpus(corpus_config)
 
             for file_path in files:
-                result = self._process_file(file_path, cid)
+                self._emit_progress(progress_callback, {
+                    "status": "running",
+                    "corpora_total": len(queued_corpora),
+                    "corpora_processed": summary["corpora_processed"],
+                    "total_files": summary["total_files"],
+                    "files_completed": summary["files_completed"],
+                    "files_processed": summary["files_processed"],
+                    "files_skipped": summary["files_skipped"],
+                    "files_failed": summary["files_failed"],
+                    "percent_complete": round(
+                        (summary["files_completed"] / summary["total_files"]) * 100, 1
+                    ) if summary["total_files"] else 100.0,
+                    "current_corpus": cid,
+                    "current_file": file_path,
+                    "message": f"Processing {summary['files_completed'] + 1} of {summary['total_files']}",
+                })
+                result = self._process_file(file_path, cid, corpus_config, embedder)
+                summary["files_completed"] += 1
                 if result == "processed":
                     summary["files_processed"] += 1
                 elif result == "skipped":
@@ -199,12 +350,35 @@ class IngestionPipeline:
                 else:
                     summary["files_failed"] += 1
 
+                self._emit_progress(progress_callback, {
+                    "status": "running",
+                    "corpora_total": len(queued_corpora),
+                    "corpora_processed": summary["corpora_processed"],
+                    "total_files": summary["total_files"],
+                    "files_completed": summary["files_completed"],
+                    "files_processed": summary["files_processed"],
+                    "files_skipped": summary["files_skipped"],
+                    "files_failed": summary["files_failed"],
+                    "percent_complete": round(
+                        (summary["files_completed"] / summary["total_files"]) * 100, 1
+                    ) if summary["total_files"] else 100.0,
+                    "current_corpus": cid,
+                    "current_file": file_path,
+                    "message": f"Completed {summary['files_completed']} of {summary['total_files']}",
+                })
+
             summary["corpora_processed"] += 1
 
         logger.info(f"Ingestion run complete. Summary: {summary}")
         return summary
 
-    def _process_file(self, file_path: str, corpus_id: str) -> str:
+    def _process_file(
+        self,
+        file_path: str,
+        corpus_id: str,
+        corpus_config: Dict[str, Any],
+        embedder,
+    ) -> str:
         """
         Process a single file through the ingestion pipeline.
 
@@ -280,11 +454,7 @@ class IngestionPipeline:
                     text = f.read()
 
             # Select chunker based on extension
-            chunker = self.chunkers['default']
-            if ext == '.py':
-                chunker = self.chunkers['code_symbols']
-            elif ext == '.md' or ext == '.epub':
-                chunker = self.chunkers['markdown']
+            chunker = self._get_chunker(ext, corpus_config)
 
             # Chunk the text
             chunks = chunker.chunk(text, metadata)
@@ -298,7 +468,7 @@ class IngestionPipeline:
             # Embed chunks
             chunk_texts = [c['content'] for c in chunks]
             start_time = time.time()
-            embeddings = self.embedder.embed(chunk_texts)
+            embeddings = embedder.embed(chunk_texts)
             logger.info(f"Embedded {len(embeddings)} chunks in {time.time() - start_time:.2f}s")
 
             if not embeddings:

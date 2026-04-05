@@ -9,7 +9,7 @@ import time
 
 from ..vector.qdrant_client import VectorService
 from ..providers.base import EmbeddingProvider, LLMProvider
-from ..providers.factory import get_llm_provider
+from ..providers.factory import get_embedding_provider, get_llm_provider
 from ..providers.reranker import RerankProvider
 from ..services.corpus_service import validate_corpus_id, CorpusValidationError
 from ..utils.logging import setup_logging
@@ -20,6 +20,12 @@ logger = setup_logging()
 
 # Default base URL for LLM providers (loaded from config when possible)
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_PROVIDER_BASE_URLS = {
+    "ollama": DEFAULT_OLLAMA_URL,
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
 
 
 class QueryEngine:
@@ -127,6 +133,43 @@ class QueryEngine:
 
         return self.default_llm
 
+    def _load_corpus_meta(self, corpus_id: str) -> Dict[str, Any]:
+        config_path = self._get_corpus_config_path(corpus_id)
+        if not config_path:
+            return {}
+        try:
+            with open(config_path) as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning(f"Failed to load corpus config for {corpus_id}: {e}")
+            return {}
+
+    def _resolve_embedder(self, corpus_id: str) -> EmbeddingProvider:
+        meta = self._load_corpus_meta(corpus_id)
+        embedding_config = meta.get("models", {}).get("embeddings")
+        if not embedding_config:
+            return self.embedder
+
+        default_embeddings = getattr(getattr(self.config, "models", None), "embeddings", None)
+        default_provider = default_embeddings.provider if default_embeddings else "ollama"
+        default_model = default_embeddings.model if default_embeddings else "nomic-embed-text"
+        default_base_url = default_embeddings.base_url if default_embeddings else self.base_url
+        default_api_key = default_embeddings.api_key if default_embeddings else None
+
+        provider = embedding_config.get("provider", default_provider)
+        model = embedding_config.get("model", default_model)
+        base_url = (
+            embedding_config.get("base_url")
+            or DEFAULT_PROVIDER_BASE_URLS.get(provider, default_base_url)
+        )
+        api_key = embedding_config.get("api_key", default_api_key)
+        return get_embedding_provider(
+            provider,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+        )
+
     def query(
         self,
         query_text: str,
@@ -165,7 +208,8 @@ class QueryEngine:
         hits = []
         if corpus_id:
             try:
-                query_vector = self.embedder.embed([query_text])[0]
+                embedder = self._resolve_embedder(corpus_id)
+                query_vector = embedder.embed([query_text])[0]
                 # If reranking is enabled, fetch more candidates initially
                 initial_k = top_k * 3 if self.reranker else top_k
                 hits = self.vector_service.search(corpus_id, query_vector, limit=initial_k)

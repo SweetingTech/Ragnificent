@@ -1,0 +1,48 @@
+presets:
+  epub_general:
+    display_name: "EPUB General"
+    description: "Recommended for fiction, prose, and general ebook libraries."
+    embedding:
+      provider: "openrouter"
+      model: "qwen/qwen3-embedding-8b"
+      base_url: "https://openrouter.ai/api/v1"
+    chunking:
+      strategy: "heading_then_paragraph"
+      max_tokens: 700
+      overlap_tokens: 120
+
+  epub_technical:
+    display_name: "EPUB Technical"
+    description: "Recommended for technical books, manuals, and long-form reference content."
+    embedding:
+      provider: "ollama"
+      model: "snowflake-arctic-embed"
+      base_url: "http://localhost:11434"
+    chunking:
+      strategy: "heading_then_paragraph"
+      max_tokens: 500
+      overlap_tokens: 100
+
+  epub_academic:
+    display_name: "EPUB Academic"
+    description: "Recommended for academic and citation-dense content where retrieval precision matters most."
+    embedding:
+      provider: "openai"
+      model: "text-embedding-3-large"
+      base_url: "https://api.openai.com/v1"
+    chunking:
+      strategy: "heading_then_paragraph"
+      max_tokens: 450
+      overlap_tokens: 90
+
+  epub_budget:
+    display_name: "EPUB Budget"
+    description: "Recommended for budget bulk ingest of large ebook collections."
+    embedding:
+      provider: "openai"
+      model: "text-embedding-3-small"
+      base_url: "https://api.openai.com/v1"
+    chunking:
+      strategy: "heading_then_paragraph"
+      max_tokens: 650
+      overlap_tokens: 100

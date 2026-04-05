@@ -3,14 +3,14 @@
 {% block title %}Add New Librarian - Ragnificent{% endblock %}
 
 {% block content %}
-<div class="container" style="max-width: 600px;">
+<div class="container" style="max-width: 860px;">
     <h2>Deploy New Librarian</h2>
     <p style="color: var(--text-secondary); margin-bottom: 2rem;">
-        Point to a local folder to create a dedicated RAG database and agent.
+        Set the source folder, pick an ingest-time embedding preset, and override anything you want before the first sync.
     </p>
 
     <form action="/gui/corpora/create" method="POST" class="card" id="create-form">
-        <!-- Hidden field JS populates before submit -->
+        <input type="hidden" name="embed_model" id="embed_model_hidden">
         <input type="hidden" name="llm_model" id="llm_model_hidden">
 
         <label>Librarian Name (ID)</label>
@@ -24,31 +24,89 @@
 
         <label>Source Folder Path</label>
         <input type="text" name="source_path" placeholder="D:\MyDocuments\ProjectX" required>
-        <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
-            Files in this folder will be monitored and ingested.
+        <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1.5rem;">
+            Files in this folder will be monitored and ingested into this librarian.
         </small>
 
-        <label>Answer Provider</label>
-        <select name="llm_provider" id="llm_provider" onchange="onProviderChange()">
-            <option value="ollama">Ollama (Local / LAN)</option>
-            <option value="openai">OpenAI (ChatGPT)</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="openrouter">OpenRouter</option>
-        </select>
+        <div class="card" style="margin: 0 0 1.5rem; background: rgba(2, 6, 23, 0.42);">
+            <h3 style="margin-bottom: 0.5rem;">Embedding Preset</h3>
+            <p style="color: var(--text-secondary); font-size: 0.92rem; margin-bottom: 1rem;">
+                Embeddings are locked in at ingest time. Pick a preset for new corpora, then override the provider, model, or chunking below if you need custom behavior.
+            </p>
 
-        <label style="margin-top: 1rem;">Model</label>
-        <select id="llm_model_select" onchange="onModelChange()"></select>
-        <input type="text" id="llm_model_custom" placeholder="Enter model ID"
-               style="display:none; margin-top: 0.5rem;">
-        <small id="model_note" style="color: var(--text-secondary); display:block;
-               margin-top: 0.25rem; margin-bottom: 1rem;"></small>
+            <label>Preset</label>
+            <select name="embedding_preset" id="embedding_preset" onchange="onPresetChange()">
+                {% for preset_id, preset in embedding_presets.presets.items() %}
+                <option value="{{ preset_id }}">{{ preset.display_name }}</option>
+                {% endfor %}
+                <option value="custom">Custom</option>
+            </select>
+            <small id="embedding_preset_note" style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;"></small>
 
-        <label>Custom Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional)</span></label>
-        <input type="text" name="llm_base_url" placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
-        <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem; margin-bottom: 1rem;">
-            Leave blank to use the provider default.
-            API keys are read from <code>.env</code> — see <a href="/gui/settings">Settings</a> for status.
-        </small>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+                <div>
+                    <label>Embedding Provider</label>
+                    <select name="embed_provider" id="embed_provider" onchange="onEmbedProviderChange()">
+                        <option value="ollama">Ollama (Local / LAN)</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Chunk Strategy</label>
+                    <select name="chunk_strategy" id="chunk_strategy" onchange="markPresetCustomIfDirty()">
+                        <option value="heading_then_paragraph">Heading Then Paragraph</option>
+                        <option value="paragraph_sections">Paragraph Sections</option>
+                        <option value="code_symbols">Code Symbols</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Chunk Target Tokens</label>
+                    <input type="number" min="100" step="10" name="chunk_max_tokens" id="chunk_max_tokens" value="700" onchange="markPresetCustomIfDirty()">
+                </div>
+                <div>
+                    <label>Chunk Overlap Tokens</label>
+                    <input type="number" min="0" step="10" name="chunk_overlap_tokens" id="chunk_overlap_tokens" value="120" onchange="markPresetCustomIfDirty()">
+                </div>
+            </div>
+
+            <label style="margin-top: 1rem;">Embedding Model</label>
+            <select id="embed_model_select" onchange="onEmbedModelChange()"></select>
+            <input type="text" id="embed_model_custom" placeholder="Enter model ID" style="display:none; margin-top: 0.5rem;">
+            <small id="embed_model_note" style="color: var(--text-secondary); display:block; margin-top: 0.25rem; margin-bottom: 1rem;"></small>
+
+            <label>Embedding Base URL</label>
+            <input type="text" name="embed_base_url" id="embed_base_url" placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
+            <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem;">
+                Hosted providers auto-fill their standard endpoint. Ollama stays editable.
+            </small>
+        </div>
+
+        <div class="card" style="margin: 0 0 1.5rem; background: rgba(2, 6, 23, 0.42);">
+            <h3 style="margin-bottom: 0.5rem;">Answer Model</h3>
+            <p style="color: var(--text-secondary); font-size: 0.92rem; margin-bottom: 1rem;">
+                This controls chat and answer generation for this librarian. It does not change the corpus embeddings.
+            </p>
+
+            <label>Answer Provider</label>
+            <select name="llm_provider" id="llm_provider" onchange="onProviderChange()">
+                <option value="ollama">Ollama (Local / LAN)</option>
+                <option value="openai">OpenAI (ChatGPT)</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="openrouter">OpenRouter</option>
+            </select>
+
+            <label style="margin-top: 1rem;">Model</label>
+            <select id="llm_model_select" onchange="onModelChange()"></select>
+            <input type="text" id="llm_model_custom" placeholder="Enter model ID" style="display:none; margin-top: 0.5rem;">
+            <small id="model_note" style="color: var(--text-secondary); display:block; margin-top: 0.25rem; margin-bottom: 1rem;"></small>
+
+            <label>Answer Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional)</span></label>
+            <input type="text" name="llm_base_url" id="llm_base_url" placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
+            <small style="color: var(--text-secondary); display:block; margin-top: -0.5rem;">
+                API keys are read from <code>.env</code>. Hosted providers use their standard endpoint by default.
+            </small>
+        </div>
 
         <div style="margin-top: 1.5rem; text-align: right;">
             <a href="/gui/dashboard" class="btn">Cancel</a>
@@ -59,29 +117,52 @@
 
 <script>
 const CATALOG = {{ models_catalog | tojson }};
+const PRESETS = {{ embedding_presets | tojson }};
+const DEFAULT_ANSWER = {
+    provider: {{ default_answer_provider | tojson }},
+    model: {{ default_answer_model | tojson }},
+    baseUrl: {{ default_answer_base_url | tojson }},
+};
 const PROVIDER_SETTINGS = {
-    ollama: { baseUrl: "http://localhost:11434", customModel: true, customBaseUrl: true },
-    openai: { baseUrl: "https://api.openai.com/v1", customModel: false, customBaseUrl: false },
-    anthropic: { baseUrl: "https://api.anthropic.com/v1", customModel: false, customBaseUrl: false },
-    openrouter: { baseUrl: "https://openrouter.ai/api/v1", customModel: false, customBaseUrl: false },
+    embedding: {
+        ollama: { baseUrl: "http://localhost:11434", customModel: true, customBaseUrl: true },
+        openai: { baseUrl: "https://api.openai.com/v1", customModel: false, customBaseUrl: false },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1", customModel: false, customBaseUrl: false },
+    },
+    llm: {
+        ollama: { baseUrl: "http://localhost:11434", customModel: true, customBaseUrl: true },
+        openai: { baseUrl: "https://api.openai.com/v1", customModel: false, customBaseUrl: false },
+        anthropic: { baseUrl: "https://api.anthropic.com/v1", customModel: false, customBaseUrl: false },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1", customModel: false, customBaseUrl: false },
+    },
 };
 
-function getModels(provider) {
-    return ((CATALOG["llm"] || {})[provider] || {}).models || [];
+function getProviderSettings(role, provider) {
+    return PROVIDER_SETTINGS[role][provider] || { baseUrl: "", customModel: false, customBaseUrl: false };
 }
 
-function getDefaultModel(provider) {
-    const models = getModels(provider);
+function getModels(role, provider) {
+    return ((CATALOG[role] || {})[provider] || {}).models || [];
+}
+
+function getDefaultModel(role, provider) {
+    const models = getModels(role, provider);
     return models.length ? models[0].id : "__other__";
 }
 
-function buildOptions(provider) {
-    const models = getModels(provider);
-    const settings = PROVIDER_SETTINGS[provider] || { customModel: false };
+function buildOptions(role, provider, currentValue) {
+    const models = getModels(role, provider);
+    const settings = getProviderSettings(role, provider);
     let html = "";
-    for (const m of models) {
-        const note = (m.notes || "").replace(/"/g, "&quot;");
-        html += `<option value="${m.id}" title="${note}">${m.display_name}</option>`;
+    let found = false;
+    for (const model of models) {
+        const note = (model.notes || "").replace(/"/g, "&quot;");
+        const selected = model.id === currentValue ? " selected" : "";
+        if (selected) found = true;
+        html += `<option value="${model.id}"${selected} title="${note}">${model.display_name}</option>`;
+    }
+    if (!found && settings.customModel && currentValue) {
+        html += `<option value="${currentValue}" selected>${currentValue} (current)</option>`;
     }
     if (settings.customModel) {
         html += `<option value="__other__">Other (type below)…</option>`;
@@ -89,36 +170,155 @@ function buildOptions(provider) {
     return html;
 }
 
+function getPreset(presetId) {
+    return (PRESETS.presets || {})[presetId] || null;
+}
+
+function syncBaseUrl(role, provider, preserveLocalValue = false) {
+    const input = document.getElementById(role === "embedding" ? "embed_base_url" : "llm_base_url");
+    const settings = getProviderSettings(role, provider);
+    if (!(preserveLocalValue && settings.customBaseUrl && input.value.trim())) {
+        input.value = settings.baseUrl;
+    }
+    input.readOnly = !settings.customBaseUrl;
+    input.style.opacity = settings.customBaseUrl ? "1" : "0.75";
+    input.title = settings.customBaseUrl ? "" : "Hosted providers use their standard API endpoint.";
+}
+
+function populateEmbedModels(currentValue) {
+    const provider = document.getElementById("embed_provider").value;
+    const select = document.getElementById("embed_model_select");
+    const targetValue = currentValue ?? getDefaultModel("embedding", provider);
+    select.innerHTML = buildOptions("embedding", provider, targetValue);
+    if ([...select.options].some(option => option.value === targetValue)) {
+        select.value = targetValue;
+    } else {
+        select.value = getDefaultModel("embedding", provider);
+    }
+    onEmbedModelChange(false);
+}
+
 function populateLlmModels(currentValue) {
     const provider = document.getElementById("llm_provider").value;
-    const sel = document.getElementById("llm_model_select");
-    sel.innerHTML = buildOptions(provider);
-    const targetValue = currentValue || getDefaultModel(provider);
-    const opt = [...sel.options].find(o => o.value === targetValue);
-    sel.value = opt ? targetValue : getDefaultModel(provider);
+    const select = document.getElementById("llm_model_select");
+    const targetValue = currentValue ?? getDefaultModel("llm", provider);
+    select.innerHTML = buildOptions("llm", provider, targetValue);
+    if ([...select.options].some(option => option.value === targetValue)) {
+        select.value = targetValue;
+    } else {
+        select.value = getDefaultModel("llm", provider);
+    }
     onModelChange();
+}
+
+function updatePresetNote() {
+    const presetId = document.getElementById("embedding_preset").value;
+    const note = document.getElementById("embedding_preset_note");
+    const preset = getPreset(presetId);
+    note.textContent = preset ? preset.description : "Manual override mode. Choose any provider, model, and chunk settings you want.";
+}
+
+function markPresetCustomIfDirty() {
+    const presetSelect = document.getElementById("embedding_preset");
+    const preset = getPreset(presetSelect.value);
+    if (!preset) {
+        updatePresetNote();
+        return;
+    }
+
+    const provider = document.getElementById("embed_provider").value;
+    const model = getCurrentEmbeddingModel();
+    const baseUrl = document.getElementById("embed_base_url").value.trim() || getProviderSettings("embedding", provider).baseUrl;
+    const chunkStrategy = document.getElementById("chunk_strategy").value;
+    const chunkMax = Number(document.getElementById("chunk_max_tokens").value || 0);
+    const chunkOverlap = Number(document.getElementById("chunk_overlap_tokens").value || 0);
+
+    const matchesPreset =
+        provider === preset.embedding.provider &&
+        model === preset.embedding.model &&
+        baseUrl === preset.embedding.base_url &&
+        chunkStrategy === preset.chunking.strategy &&
+        chunkMax === Number(preset.chunking.max_tokens) &&
+        chunkOverlap === Number(preset.chunking.overlap_tokens);
+
+    if (!matchesPreset) {
+        presetSelect.value = "custom";
+    }
+    updatePresetNote();
+}
+
+function onPresetChange() {
+    const presetId = document.getElementById("embedding_preset").value;
+    const preset = getPreset(presetId);
+    if (!preset) {
+        updatePresetNote();
+        return;
+    }
+
+    document.getElementById("embed_provider").value = preset.embedding.provider;
+    syncBaseUrl("embedding", preset.embedding.provider);
+    document.getElementById("embed_base_url").value = preset.embedding.base_url;
+    document.getElementById("chunk_strategy").value = preset.chunking.strategy;
+    document.getElementById("chunk_max_tokens").value = preset.chunking.max_tokens;
+    document.getElementById("chunk_overlap_tokens").value = preset.chunking.overlap_tokens;
+    populateEmbedModels(preset.embedding.model);
+    updatePresetNote();
+}
+
+function onEmbedProviderChange() {
+    const provider = document.getElementById("embed_provider").value;
+    syncBaseUrl("embedding", provider);
+    populateEmbedModels(getDefaultModel("embedding", provider));
+    markPresetCustomIfDirty();
+}
+
+function getCurrentEmbeddingModel() {
+    const select = document.getElementById("embed_model_select");
+    const custom = document.getElementById("embed_model_custom");
+    return select.value === "__other__" ? custom.value.trim() : select.value;
+}
+
+function onEmbedModelChange(markDirty = true) {
+    const provider = document.getElementById("embed_provider").value;
+    const settings = getProviderSettings("embedding", provider);
+    const select = document.getElementById("embed_model_select");
+    const custom = document.getElementById("embed_model_custom");
+    const note = document.getElementById("embed_model_note");
+    const hidden = document.getElementById("embed_model_hidden");
+
+    if (settings.customModel && select.value === "__other__") {
+        custom.style.display = "";
+        custom.required = true;
+        hidden.value = "";
+        note.textContent = "";
+    } else {
+        custom.style.display = "none";
+        custom.required = false;
+        hidden.value = select.value;
+        const entry = getModels("embedding", provider).find(model => model.id === select.value);
+        note.textContent = entry ? entry.notes : "";
+    }
+
+    if (markDirty) {
+        markPresetCustomIfDirty();
+    }
 }
 
 function onProviderChange() {
     const provider = document.getElementById("llm_provider").value;
-    const settings = PROVIDER_SETTINGS[provider] || { baseUrl: "", customBaseUrl: false };
-    const input = document.querySelector('input[name="llm_base_url"]');
-    input.value = settings.baseUrl;
-    input.readOnly = !settings.customBaseUrl;
-    input.style.opacity = settings.customBaseUrl ? "1" : "0.75";
-    input.title = settings.customBaseUrl ? "" : "Hosted providers use their standard API endpoint.";
-    populateLlmModels(getDefaultModel(provider));
+    syncBaseUrl("llm", provider);
+    populateLlmModels(getDefaultModel("llm", provider));
 }
 
 function onModelChange() {
     const provider = document.getElementById("llm_provider").value;
-    const settings = PROVIDER_SETTINGS[provider] || { customModel: false };
-    const sel    = document.getElementById("llm_model_select");
+    const settings = getProviderSettings("llm", provider);
+    const select = document.getElementById("llm_model_select");
     const custom = document.getElementById("llm_model_custom");
-    const note   = document.getElementById("model_note");
+    const note = document.getElementById("model_note");
     const hidden = document.getElementById("llm_model_hidden");
 
-    if (settings.customModel && sel.value === "__other__") {
+    if (settings.customModel && select.value === "__other__") {
         custom.style.display = "";
         custom.required = true;
         note.textContent = "";
@@ -126,20 +326,38 @@ function onModelChange() {
     } else {
         custom.style.display = "none";
         custom.required = false;
-        hidden.value = sel.value;
-        const entry = getModels(provider).find(m => m.id === sel.value);
+        hidden.value = select.value;
+        const entry = getModels("llm", provider).find(model => model.id === select.value);
         note.textContent = entry ? entry.notes : "";
     }
 }
 
+document.getElementById("embed_model_custom").addEventListener("input", markPresetCustomIfDirty);
+document.getElementById("embed_base_url").addEventListener("input", markPresetCustomIfDirty);
 document.getElementById("create-form").addEventListener("submit", function() {
-    const sel    = document.getElementById("llm_model_select");
-    const custom = document.getElementById("llm_model_custom");
-    const hidden = document.getElementById("llm_model_hidden");
-    if (sel.value === "__other__") hidden.value = custom.value.trim();
+    const embedSelect = document.getElementById("embed_model_select");
+    const embedCustom = document.getElementById("embed_model_custom");
+    const embedHidden = document.getElementById("embed_model_hidden");
+    if (embedSelect.value === "__other__") {
+        embedHidden.value = embedCustom.value.trim();
+    }
+
+    const llmSelect = document.getElementById("llm_model_select");
+    const llmCustom = document.getElementById("llm_model_custom");
+    const llmHidden = document.getElementById("llm_model_hidden");
+    if (llmSelect.value === "__other__") {
+        llmHidden.value = llmCustom.value.trim();
+    }
 });
 
-// Populate on load with Ollama as the default provider
-onProviderChange();
+document.getElementById("llm_provider").value = DEFAULT_ANSWER.provider || "ollama";
+syncBaseUrl("llm", document.getElementById("llm_provider").value);
+if (DEFAULT_ANSWER.baseUrl) {
+    document.getElementById("llm_base_url").value = DEFAULT_ANSWER.baseUrl;
+}
+populateLlmModels(DEFAULT_ANSWER.model || getDefaultModel("llm", document.getElementById("llm_provider").value));
+
+document.getElementById("embedding_preset").value = "epub_general";
+onPresetChange();
 </script>
 {% endblock %}

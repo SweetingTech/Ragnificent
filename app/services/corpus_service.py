@@ -2,7 +2,7 @@
 Corpus service for managing corpus operations with proper validation.
 Consolidates duplicate get_corpora() logic and adds security measures.
 """
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from pathlib import Path
 import yaml
 import re
@@ -15,6 +15,12 @@ logger = setup_logging()
 # Constants for validation
 CORPUS_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 MAX_CORPUS_ID_LENGTH = 64
+PROVIDER_DEFAULT_BASE_URLS = {
+    "ollama": "http://localhost:11434",
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
 
 
 class CorpusValidationError(Exception):
@@ -197,6 +203,13 @@ class CorpusService:
         llm_model: str = "llama3",
         llm_provider: str = "ollama",
         llm_base_url: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        embedding_base_url: Optional[str] = None,
+        embedding_preset: Optional[str] = None,
+        chunk_strategy: str = "pdf_sections",
+        chunk_max_tokens: int = 700,
+        chunk_overlap_tokens: int = 80,
     ) -> Path:
         """
         Create a new corpus with directory structure and configuration.
@@ -225,6 +238,7 @@ class CorpusService:
         # Sanitize user inputs
         safe_description = sanitize_yaml_string(description)
         safe_source_path = sanitize_yaml_string(source_path)
+        safe_chunk_strategy = sanitize_yaml_string(chunk_strategy or "pdf_sections")
 
         # Create corpus.yaml with sanitized values
         config_content = {
@@ -240,14 +254,35 @@ class CorpusService:
             },
             "chunking": {
                 "default": {
-                    "strategy": "pdf_sections",
-                    "max_tokens": 700,
-                    "overlap_tokens": 80
+                    "strategy": safe_chunk_strategy,
+                    "max_tokens": int(chunk_max_tokens),
+                    "overlap_tokens": int(chunk_overlap_tokens),
                 }
             }
         }
         if llm_base_url:
             config_content["models"]["answer"]["base_url"] = sanitize_yaml_string(llm_base_url)
+        else:
+            config_content["models"]["answer"]["base_url"] = PROVIDER_DEFAULT_BASE_URLS.get(
+                llm_provider,
+                PROVIDER_DEFAULT_BASE_URLS["ollama"],
+            )
+
+        if embedding_provider and embedding_model:
+            config_content["models"]["embeddings"] = {
+                "provider": sanitize_yaml_string(embedding_provider),
+                "model": sanitize_yaml_string(embedding_model),
+                "base_url": sanitize_yaml_string(
+                    embedding_base_url
+                    or PROVIDER_DEFAULT_BASE_URLS.get(
+                        embedding_provider,
+                        PROVIDER_DEFAULT_BASE_URLS["ollama"],
+                    )
+                ),
+            }
+
+        if embedding_preset and embedding_preset != "custom":
+            config_content["embedding_preset"] = sanitize_yaml_string(embedding_preset)
 
         config_path = corpus_path / "corpus.yaml"
         with open(config_path, "w") as f:

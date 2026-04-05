@@ -12,12 +12,7 @@ too simple to be useful or too complex to actually run.**
 
 </div>
 
-RAGnificent is a local-first document intelligence service. Drop files
-into a folder, trigger a sync, and get a persistent queryable vector
-index back — with streaming LLM answers and citations. Each corpus
-gets its own isolated Qdrant collection, its own chunking strategy,
-and its own LLM config. No shared state between document sets. No
-external API calls required.
+RAGnificent is a document intelligence service that runs locally or connects to cloud AI providers. Drop files into a folder, trigger a sync, and get a persistent queryable vector index back with LLM answers and citations. Each corpus gets its own isolated Qdrant collection, its own chunking strategy, its own answer model, and now its own embedding configuration. No shared state between document sets.
 
 ---
 
@@ -31,6 +26,7 @@ external API calls required.
 | **Deduplication** | None | SHA-256 content hash, idempotent ingest |
 | **Config** | Global only | Per-corpus `corpus.yaml` overrides |
 | **Interface** | CLI or nothing | Web GUI + REST API + CLI |
+| **AI providers** | Local only | Ollama, OpenAI, Anthropic, OpenRouter |
 | **Deployment** | Script or nothing | Docker Compose or bare Python |
 
 ---
@@ -59,7 +55,7 @@ graph TD
     H -->|PDF| H2[PDF Sections Chunker]
     H -->|Code| H3[Code Symbols Chunker]
     H1 & H2 & H3 -->|Split| I[Chunks]
-    I -->|Embed| J[Ollama/Provider]
+    I -->|Embed| J[Embedding Provider]
     J -->|Upsert| K[(Qdrant Vector DB)]
     D -->|Update State| L[(SQLite State DB)]
     end
@@ -70,8 +66,8 @@ graph TD
     M -->|Search| K
     K -->|Hits| M
     M -->|Optional Rerank| N[Reranker]
-    N -->|Generate Answer| O[Ollama LLM]
-    O -->|Streamed Response| A
+    N -->|Generate Answer| O[LLM Provider]
+    O -->|Response| A
     end
 ```
 
@@ -84,30 +80,65 @@ graph TD
 - Lane-based extraction routing: PyMuPDF for native PDFs, OCRmyPDF for scanned PDFs, Tesseract/PaddleOCR for images, dedicated EPUB extractor, text/code loader
 - OCR fallback per-page when text density falls below a configurable threshold
 - Three chunking strategies: Markdown header-aware, PDF paragraph-based with overlap, Python function/class symbol-aware
+- Live ingest progress from `/api/ingest/status` and the GUI overlay: total files, completed count, current file, processed/skipped/failed counts, percent complete
+- Retry failed files from the corpus management page without re-running a full corpus scan
 
 ### Per-Corpus Isolation
 - Each corpus gets its own Qdrant collection — no cross-contamination between document sets
 - Per-corpus `corpus.yaml` overrides chunking strategy, LLM model, and embedding settings
+- Embeddings are chosen at corpus creation / ingest time, not retroactively from the global Settings page
+- Query-time embedding resolution follows the corpus config, so retrieval stays aligned with the vectors that corpus was built with
 - Corpus-specific inbox folder; drop files and trigger sync
+- Delete a corpus from the GUI — removes Qdrant collection, SQLite records, and directory
+
+### Multi-Provider AI Support
+- **Ollama** — local inference on the machine or anywhere on your LAN (`http://hostname:11434`)
+- **OpenAI** — GPT-4.x, GPT-5.x, o-series models via the ChatGPT API
+- **Anthropic** — Claude 3.x, Claude 4.x models via the Claude API
+- **OpenRouter** — access 200+ models from a single API key (GPT, Claude, Gemini, DeepSeek, Llama, Qwen, Mistral, and more)
+- Provider and model configurable globally in Settings, or overridden per-corpus
+
+### Model Catalog
+- `models_catalog.yaml` at the project root is the single source of truth for all UI dropdowns
+- Organized by role (`embedding` / `llm`) and provider
+- Edit this file to add, remove, or reorder models without touching any code
+
+### Embedding Presets
+- `embedding_presets.yaml` defines user-facing ingest presets such as `EPUB General`, `EPUB Technical`, `EPUB Academic`, and `EPUB Budget`
+- Presets auto-fill embedding provider, embedding model, base URL, and chunking defaults during corpus creation
+- Users can still override any preset field before deploying a corpus
+- Presets are saved into each corpus config so the ingest pipeline and query path use the same embedding policy later
+
+### Settings & Connection Testing
+- `/gui/settings` — configure embedding and LLM providers, models, and base URLs from the browser
+- **Test Connection** button per provider — makes a real minimal API call and shows pass/fail inline before you save
+- API key status table shows which keys are loaded from your `.env` file
+- Hosted provider base URLs auto-fill and stay locked to the provider default; Ollama remains editable for custom LAN / local endpoints
+- The embedding section on Settings is now treated as defaults for new corpora plus a connection test harness; existing corpora keep the embedding model they were ingested with
 
 ### Retrieval
-- Vector similarity search with streaming LLM-generated answers
+- Vector similarity search with LLM-generated answers
 - Source citations returned with every response
 - Optional post-retrieval reranking stage (pluggable)
 - Configurable `top_k`, model selection per query
 
 ### Interface
-- Web GUI: dashboard, RAG search, corpus management, corpus creation
-- REST API: health, query, ingest trigger endpoints
+- Web GUI: dashboard, RAG search, corpus management, corpus creation, settings
+- Live feedback: spinner overlay during operations, toast notifications on completion
+- Corpus creation flow includes ingest-time embedding presets plus manual overrides for provider, model, base URL, and chunking
+- Corpus management page shows embedding preset, embedding model, chunking settings, failed-file count, sync progress, and a retry-failed action
+- REST API: health, query, ingest trigger, connection test endpoints
 - CLI: `init-db`, `serve`, `ingest`, `ingest-file` commands
 
 ### Engineering
+- Full-restart file watcher (`watcher.py`) — detects changes to `.py`, `.html`, `.yaml`, `.css`, `.js` and restarts the entire server process tree; no stale-import issues
 - Thread-safe SQLite with WAL mode and thread-local connections
 - Async non-blocking I/O — blocking operations run via `asyncio.to_thread()`
-- FastAPI dependency injection throughout — no module-level globals
-- O(1) Qdrant collection existence checks with caching
+- `lru_cache` singletons for services — eliminates per-request re-initialization overhead
+- 30-second TTL count cache on Qdrant vector counts
 - Path traversal protection: corpus IDs validated against strict regex with path resolution verification
 - YAML sanitization: user inputs sanitized via `yaml.safe_dump()` before writes
+- Windows and Linux run scripts auto-start local Qdrant with `docker compose up -d qdrant` when `vector_db.url` points at `localhost:6333`
 
 ---
 
@@ -117,13 +148,25 @@ graph TD
 
 ```bash
 cp .env.example .env
+# Edit .env and add your API keys (optional — only needed for cloud providers)
 docker-compose up -d
 # Service: http://localhost:8008
 ```
 
-### Option 2 — Bare Python
+### Option 2 — Bare Python (Windows)
 
-**Linux/macOS:**
+```powershell
+.\scripts\windows\setup.ps1
+copy .env.example .env
+# Edit .env and add your API keys (optional)
+.\scripts\windows\init_state_db.ps1
+.\scripts\windows\run.ps1
+```
+
+`run.ps1` starts the full-restart watcher and, when `config.yaml` points Qdrant at `http://localhost:6333`, also tries to bring up the local `qdrant` container automatically.
+
+### Option 3 — Bare Python (Linux/macOS)
+
 ```bash
 ./scripts/linux/setup.sh
 cp .env.example .env
@@ -131,13 +174,36 @@ cp .env.example .env
 ./scripts/linux/run.sh
 ```
 
-**Windows (PowerShell):**
+`run.sh` follows the same local-Qdrant auto-start behavior when `vector_db.url` is `localhost:6333`.
+
+### Stopping the server (Windows)
+
 ```powershell
-./scripts/windows/setup.ps1
-cp .env.example .env
-./scripts/windows/init_state_db.ps1
-./scripts/windows/run.ps1
+.\scripts\windows\stop.ps1
 ```
+
+This kills the entire process tree (watcher + uvicorn workers) and verifies the port is clear before returning.
+
+---
+
+## API Keys (.env Setup)
+
+API keys are never hardcoded. Copy `.env.example` to `.env` and fill in the keys for the providers you want to use. Ollama requires no key.
+
+```env
+# Anthropic (Claude models)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI (GPT models)
+OPENAI_API_KEY=sk-...
+
+# OpenRouter (access to 200+ models)
+OPENROUTER_API_KEY=sk-or-...
+```
+
+The Settings page (`/gui/settings`) shows which keys are currently loaded.
+
+If you change `.env`, restart the app. The watcher reloads code, templates, CSS, and YAML, but it does not watch `.env`.
 
 ---
 
@@ -145,10 +211,11 @@ cp .env.example .env
 
 ### Via the Web GUI
 
-1. Open `http://localhost:8008/gui/create-corpus`
-2. Give the corpus an ID and point `source_path` at **any folder on the machine** (e.g. `D:/documents/research`). The vector database always stays inside `rag_library/` — only the *source* of documents is external.
-3. Trigger ingestion via the GUI or the API
-4. Query at `/gui/search` — select a corpus, ask a question, get a streamed answer with citations
+1. Open `http://localhost:8008`
+2. Go to **Settings** to set provider defaults and verify API connectivity with **Test Connection**
+3. Go to **Deploy New Librarian** — give it an ID, point `source_path` at any folder on the machine, and choose an **Embedding Preset** or customize the embedding + chunking settings
+4. Trigger ingestion via the Manage page and watch live progress
+5. Query at `/gui/search` — select a corpus, ask a question, get an answer with citations
 
 ### Via the API (for agents or scripts)
 
@@ -156,15 +223,23 @@ cp .env.example .env
 # Create a corpus pointed at any local folder
 curl -X POST http://localhost:8008/api/corpora \
   -H "Content-Type: application/json" \
-  -d '{"corpus_id":"my_docs","description":"My documents","source_path":"D:/documents/research"}'
+  -d '{"corpus_id":"my_docs","description":"My documents","source_path":"D:/documents/research","embedding_preset":"epub_general","embedding_provider":"openrouter","embedding_model":"qwen/qwen3-embedding-8b","chunk_strategy":"heading_then_paragraph","chunk_max_tokens":700,"chunk_overlap_tokens":120}'
 
 # Trigger ingestion
 curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs"
+
+# Retry only failed files for a corpus
+curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs&retry_failed_only=true"
 
 # Query the database
 curl -X POST http://localhost:8008/api/query \
   -H "Content-Type: application/json" \
   -d '{"query":"What is the main finding?","corpus_id":"my_docs","top_k":5}'
+
+# Test a provider connection
+curl -X POST http://localhost:8008/api/test-connection \
+  -H "Content-Type: application/json" \
+  -d '{"role":"llm","provider":"anthropic","model":"claude-sonnet-4-6"}'
 ```
 
 ### Via the CLI
@@ -183,11 +258,11 @@ Each corpus has two document locations:
 | `source_path` | Any folder you point to — RAGnificent scans this for documents |
 | `rag_library/corpora/<id>/inbox/` | Drop zone inside the library — also scanned during ingestion |
 
-Both are scanned on every ingestion run. The RAG vector database always lives in `rag_library/` regardless of where the source documents are.
+`source_path` is the main scan target stored in the corpus config. The per-corpus `inbox/` remains available as a drop zone inside `rag_library/`. The RAG vector database always lives in `rag_library/` regardless of where the source documents are.
 
 ---
 
-## API
+## API Reference
 
 CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your local network — including AI agents — can call the API without browser restrictions.
 
@@ -198,31 +273,30 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 | `GET` | `/api/corpora` | List all RAG databases with vector counts and query endpoint |
 | `GET` | `/api/corpora/{corpus_id}` | Full detail for one corpus (config, vector count, paths) |
 | `POST` | `/api/corpora` | Create a new corpus pointed at any local folder |
+| `DELETE` | `/api/corpora/{corpus_id}` | Delete corpus — removes Qdrant collection, state records, and directory |
 
 ### Query
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/query` | RAG query — `query`, `corpus_id`, `top_k`, `llm_model` |
-| `GET` | `/api/query/models` | List available Ollama models |
 
 ### Ingestion
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/ingest/run` | Trigger ingestion (`?corpus_id=<id>` or all) |
-| `GET` | `/api/ingest/status` | Current ingestion status |
+| `POST` | `/api/ingest/run?retry_failed_only=true` | Retry only failed files for a corpus |
+| `GET` | `/api/ingest/status` | Current ingestion status, counts, current file, and progress percentage |
 
-### Other
+### Utilities
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `POST` | `/api/test-connection` | Test provider connectivity — `role`, `provider`, `model`, `base_url` |
 | `GET` | `/health` | Health check |
-| `GET` | `/gui/*` | Web GUI pages |
 
 ### Connecting an AI agent
-
-See [`docs/agent-integration.md`](docs/agent-integration.md) for the full agent workflow with request/response examples. The short version:
 
 ```
 1. GET  /api/corpora          → discover databases, pick corpus_id
@@ -234,25 +308,76 @@ See [`docs/agent-integration.md`](docs/agent-integration.md) for the full agent 
 
 ## Configuration
 
-`.env` key settings:
+### `.env` — secrets and ports
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `API_PORT` | `8008` | Server port |
-| `QDRANT_URL` | — | Qdrant connection URL |
-| `EMBED_PROVIDER` / `EMBED_MODEL` | — | Embedding provider and model |
-| `LIBRARY_ROOT` | `rag_library` | Root directory for corpora and data |
+| Variable | Description |
+|----------|-------------|
+| `API_PORT` | Server port (default `8008`) |
+| `QDRANT_URL` | Qdrant connection URL |
+| `LIBRARY_ROOT` | Root directory for corpora and data (default `rag_library`) |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
 
-Per-corpus — edit `rag_library/corpora/<id>/corpus.yaml` to override chunking strategy, LLM model, and vector settings for that corpus specifically.
+### `config.yaml` — provider and model settings
+
+Managed by the Settings UI. Controls default embedding provider/model and default LLM provider/model for new corpora plus connection testing. Per-corpus overrides live in `rag_library/corpora/<id>/corpus.yaml`.
+
+### `embedding_presets.yaml` — corpus creation presets
+
+Defines the user-facing presets shown on the Deploy New Librarian page. Each preset can set:
+
+- embedding provider
+- embedding model
+- embedding base URL
+- chunking strategy
+- chunk target tokens
+- chunk overlap tokens
+
+### `models_catalog.yaml` — UI dropdowns
+
+Edit this file to add, remove, or reorder models in the provider dropdowns. Structure:
+
+```yaml
+embedding:
+  ollama:
+    models:
+      - id: "nomic-embed-text"
+        display_name: "nomic-embed-text"
+        notes: "768-dim. Recommended default."
+  openai:
+    models: [...]
+  openrouter:
+    models: [...]
+
+llm:
+  ollama:
+    models: [...]
+  openai:
+    models: [...]
+  anthropic:
+    models: [...]
+  openrouter:
+    models: [...]
+```
+
+Current catalog/provider flow:
+
+- direct OpenAI models and embeddings come from the `openai` sections
+- direct Anthropic LLMs come from the `anthropic` section
+- OpenRouter models use provider-prefixed IDs like `openai/gpt-5.4-mini` and `qwen/qwen3-embedding-8b`
+- hosted providers auto-fill their standard API endpoint in the UI; Ollama is the editable local/LAN exception
 
 ---
 
 ## Requirements
 
 - Python 3.11+
-- [Ollama](https://ollama.com/) for embeddings and LLM inference
-- Qdrant (Docker recommended)
-- Optional: Tesseract, Ghostscript, OCRmyPDF, PaddleOCR for OCR
+- Qdrant (Docker recommended, or use Qdrant Cloud)
+- At least one of:
+  - [Ollama](https://ollama.com/) for local/LAN inference (no API key required)
+  - An Anthropic, OpenAI, or OpenRouter API key for cloud inference
+- Optional: Tesseract, Ghostscript, OCRmyPDF, PaddleOCR for OCR support
 
 ---
 
@@ -270,9 +395,11 @@ Tests run against in-memory SQLite and temporary directories — no running Qdra
 
 - **Extraction** — PyMuPDF, OCRmyPDF, Tesseract, PaddleOCR, EPUB extractor
 - **Vector store** — Qdrant (on-disk, per-corpus collections)
-- **Embeddings / LLM** — Ollama (local, no external API calls)
+- **Embeddings** — Ollama (local/LAN), OpenAI, OpenRouter
+- **LLM** — Ollama (local/LAN), OpenAI, Anthropic (Claude), OpenRouter
 - **State** — SQLite with WAL mode
 - **API** — FastAPI with HTMX-powered web GUI
+- **Dev server** — Full-restart file watcher (`watcher.py`) — no stale imports
 - **Deployment** — Docker Compose or bare Python
 
 ---

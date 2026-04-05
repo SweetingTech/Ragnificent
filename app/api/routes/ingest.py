@@ -3,6 +3,9 @@ Ingestion API routes for triggering document processing.
 """
 
 import asyncio
+import threading
+import time
+import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -20,6 +23,11 @@ from ...utils.logging import setup_logging
 logger = setup_logging()
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
+_INGEST_STATE_LOCK = threading.Lock()
+_INGEST_STATE: Dict[str, Any] = {
+    "status": "idle",
+    "message": "No active ingestion jobs",
+}
 
 
 class IngestResponse(BaseModel):
@@ -28,6 +36,16 @@ class IngestResponse(BaseModel):
     status: str
     message: str
     summary: Optional[Dict[str, Any]] = None
+
+
+def _set_ingest_state(**updates: Any) -> None:
+    with _INGEST_STATE_LOCK:
+        _INGEST_STATE.update(updates)
+
+
+def _get_ingest_state() -> Dict[str, Any]:
+    with _INGEST_STATE_LOCK:
+        return dict(_INGEST_STATE)
 
 
 @lru_cache()
@@ -67,6 +85,7 @@ def get_pipeline(db: Database = Depends(get_database)) -> IngestionPipeline:
 async def run_ingest(
     corpus_id: Optional[str] = None,
     source_path: Optional[str] = None,
+    retry_failed_only: bool = False,
     pipeline: IngestionPipeline = Depends(get_pipeline)
 ):
     """
@@ -96,11 +115,52 @@ async def run_ingest(
             raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        summary = await asyncio.to_thread(pipeline.run_once, corpus_id, source_path)
-
+        job_id = str(uuid.uuid4())
         desc = corpus_id or "all corpora"
         if source_path:
             desc = f"{corpus_id} (source: {source_path})"
+        if retry_failed_only:
+            desc = f"failed files for {desc}"
+
+        _set_ingest_state(
+            job_id=job_id,
+            status="running",
+            message=f"Starting ingestion for {desc}",
+            corpus_id=corpus_id,
+            source_path=source_path,
+            started_at=time.time(),
+            current_corpus=corpus_id,
+            current_file=None,
+            total_files=0,
+            files_completed=0,
+            files_processed=0,
+            files_skipped=0,
+            files_failed=0,
+            percent_complete=0.0,
+            retry_failed_only=retry_failed_only,
+            summary=None,
+        )
+
+        def progress_callback(update: Dict[str, Any]) -> None:
+            _set_ingest_state(job_id=job_id, **update)
+
+        summary = await asyncio.to_thread(
+            pipeline.run_once,
+            corpus_id,
+            source_path,
+            retry_failed_only,
+            progress_callback,
+        )
+
+        _set_ingest_state(
+            job_id=job_id,
+            status="success",
+            message=f"Ingestion completed for {desc}",
+            summary=summary,
+            current_file=None,
+            percent_complete=100.0,
+            finished_at=time.time(),
+        )
 
         return IngestResponse(
             status="success",
@@ -111,6 +171,11 @@ async def run_ingest(
         if get_connection_error(e):
             message = f"Cannot reach Qdrant at {pipeline.config.vector_db.url}. Is it running?"
             logger.warning(f"{message} Original error: {e}")
+            _set_ingest_state(
+                status="error",
+                message=message,
+                finished_at=time.time(),
+            )
             return JSONResponse(
                 status_code=503,
                 content=IngestResponse(status="error", message=message).model_dump(
@@ -120,6 +185,11 @@ async def run_ingest(
 
         logger.exception(
             f"Ingestion failed unexpectedly for {corpus_id or 'all corpora'}"
+        )
+        _set_ingest_state(
+            status="error",
+            message=f"Ingestion failed: {e}",
+            finished_at=time.time(),
         )
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
@@ -132,5 +202,4 @@ async def ingest_status():
     Returns:
         Current status of the ingestion system
     """
-    # Placeholder for future implementation
-    return {"status": "idle", "message": "No active ingestion jobs"}
+    return _get_ingest_state()

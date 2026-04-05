@@ -15,8 +15,56 @@ class FailingPipeline:
         self.error = error
         self.config = SimpleNamespace(vector_db=SimpleNamespace(url=url))
 
-    def run_once(self, corpus_id=None):
+    def run_once(
+        self,
+        corpus_id=None,
+        source_path=None,
+        retry_failed_only=False,
+        progress_callback=None,
+    ):
         raise self.error
+
+
+class SuccessfulPipeline:
+    def __init__(self):
+        self.config = SimpleNamespace(vector_db=SimpleNamespace(url="http://localhost:6333"))
+        self.calls = []
+
+    def run_once(
+        self,
+        corpus_id=None,
+        source_path=None,
+        retry_failed_only=False,
+        progress_callback=None,
+    ):
+        self.calls.append(
+            {
+                "corpus_id": corpus_id,
+                "source_path": source_path,
+                "retry_failed_only": retry_failed_only,
+            }
+        )
+        if progress_callback:
+            progress_callback({
+                "status": "running",
+                "total_files": 5,
+                "files_completed": 3,
+                "files_processed": 2,
+                "files_skipped": 1,
+                "files_failed": 0,
+                "percent_complete": 60.0,
+                "current_corpus": corpus_id,
+                "current_file": "demo.epub",
+                "message": "Completed 3 of 5",
+            })
+        return {
+            "corpora_processed": 1,
+            "total_files": 5,
+            "files_completed": 5,
+            "files_processed": 4,
+            "files_skipped": 1,
+            "files_failed": 0,
+        }
 
 
 def raise_error(error: Exception):
@@ -99,3 +147,42 @@ def test_startup_logs_warning_when_qdrant_is_unreachable(tmp_path, monkeypatch, 
 
     assert response.status_code == 200
     assert "Cannot reach Qdrant at http://localhost:6333. Is it running?" in caplog.text
+
+
+def test_ingest_status_reports_last_job_summary():
+    app = FastAPI()
+    app.include_router(ingest.router, prefix="/api")
+    pipeline = SuccessfulPipeline()
+    app.dependency_overrides[ingest.get_pipeline] = lambda: pipeline
+
+    with TestClient(app) as client:
+        response = client.post("/api/ingest/run?corpus_id=my_docs")
+        assert response.status_code == 200
+
+        status = client.get("/api/ingest/status")
+
+    assert status.status_code == 200
+    body = status.json()
+    assert body["status"] == "success"
+    assert body["summary"]["total_files"] == 5
+    assert body["summary"]["files_processed"] == 4
+    assert body["percent_complete"] == 100.0
+
+
+def test_retry_failed_mode_is_forwarded_to_pipeline():
+    app = FastAPI()
+    app.include_router(ingest.router, prefix="/api")
+    pipeline = SuccessfulPipeline()
+    app.dependency_overrides[ingest.get_pipeline] = lambda: pipeline
+
+    with TestClient(app) as client:
+        response = client.post("/api/ingest/run?corpus_id=my_docs&retry_failed_only=true")
+
+    assert response.status_code == 200
+    assert pipeline.calls == [
+        {
+            "corpus_id": "my_docs",
+            "source_path": None,
+            "retry_failed_only": True,
+        }
+    ]

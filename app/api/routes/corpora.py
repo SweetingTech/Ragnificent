@@ -46,6 +46,14 @@ class CreateCorpusRequest(BaseModel):
     source_path: str
     llm_model: str = "llama3"
     llm_provider: str = "ollama"
+    llm_base_url: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_base_url: Optional[str] = None
+    embedding_preset: Optional[str] = None
+    chunk_strategy: str = "pdf_sections"
+    chunk_max_tokens: int = 700
+    chunk_overlap_tokens: int = 80
 
 
 class CreateCorpusResponse(BaseModel):
@@ -139,7 +147,6 @@ async def get_corpus(
 async def create_corpus(
     body: CreateCorpusRequest,
     corpus_service: CorpusService = Depends(get_corpus_service),
-    vector_service: VectorService = Depends(get_vector_service),
 ):
     """
     Create a new RAG corpus (database) via the API.
@@ -183,9 +190,16 @@ async def create_corpus(
             source_path=source_path,
             llm_model=body.llm_model,
             llm_provider=body.llm_provider,
+            llm_base_url=body.llm_base_url,
+            embedding_provider=body.embedding_provider,
+            embedding_model=body.embedding_model,
+            embedding_base_url=body.embedding_base_url,
+            embedding_preset=body.embedding_preset,
+            chunk_strategy=body.chunk_strategy,
+            chunk_max_tokens=body.chunk_max_tokens,
+            chunk_overlap_tokens=body.chunk_overlap_tokens,
         )
         created_on_disk = True
-        vector_service.ensure_collection(body.corpus_id)
         logger.info(f"API: created corpus {body.corpus_id}")
     except Exception as e:
         logger.exception(f"Failed to create corpus {body.corpus_id}")

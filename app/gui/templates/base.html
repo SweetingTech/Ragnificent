@@ -13,6 +13,16 @@
     <div id="global-spinner" aria-live="polite">
         <div class="spinner-ring"></div>
         <span id="spinner-label">Working…</span>
+        <div id="ingest-progress-panel" class="ingest-progress-panel" hidden>
+            <div class="ingest-progress-summary">
+                <span id="ingest-progress-percent">0%</span>
+                <span id="ingest-progress-counts">0 / 0 files</span>
+            </div>
+            <div class="ingest-progress-bar">
+                <div id="ingest-progress-fill" class="ingest-progress-fill"></div>
+            </div>
+            <div id="ingest-progress-detail" class="ingest-progress-detail">Waiting for file scan…</div>
+        </div>
     </div>
 
     <!-- Toast container — toasts stack here -->
@@ -69,6 +79,12 @@ function showToast(message, type = "info", duration = 4000) {
 // ---------------------------------------------------------------------------
 const spinner = document.getElementById("global-spinner");
 const spinnerLabel = document.getElementById("spinner-label");
+const ingestProgressPanel = document.getElementById("ingest-progress-panel");
+const ingestProgressPercent = document.getElementById("ingest-progress-percent");
+const ingestProgressCounts = document.getElementById("ingest-progress-counts");
+const ingestProgressFill = document.getElementById("ingest-progress-fill");
+const ingestProgressDetail = document.getElementById("ingest-progress-detail");
+let ingestStatusPoller = null;
 
 const SPINNER_LABELS = {
     "/api/ingest/run": "Ingesting files…",
@@ -86,14 +102,66 @@ function getLabel(path) {
     return "Working…";
 }
 
+function resetIngestProgress() {
+    ingestProgressPanel.hidden = true;
+    ingestProgressPercent.textContent = "0%";
+    ingestProgressCounts.textContent = "0 / 0 files";
+    ingestProgressFill.style.width = "0%";
+    ingestProgressDetail.textContent = "Waiting for file scan…";
+}
+
+function renderIngestProgress(data) {
+    if (!data || !data.status) return;
+    ingestProgressPanel.hidden = false;
+    const total = Number(data.total_files || 0);
+    const completed = Number(data.files_completed || 0);
+    const percent = Number(data.percent_complete || 0);
+    ingestProgressPercent.textContent = `${percent.toFixed(1).replace(/\\.0$/, "")}%`;
+    ingestProgressCounts.textContent = `${completed} / ${total} files`;
+    ingestProgressFill.style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+    const currentFile = data.current_file || "";
+    const fileLabel = currentFile ? currentFile.split(/[/\\\\]/).pop() : "";
+    ingestProgressDetail.textContent = data.message || (fileLabel ? `Working on ${fileLabel}` : "Running ingest…");
+}
+
+async function pollIngestStatus() {
+    try {
+        const resp = await fetch("/api/ingest/status", { cache: "no-store" });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderIngestProgress(data);
+    } catch (_) {}
+}
+
+function startIngestStatusPolling() {
+    resetIngestProgress();
+    ingestProgressPanel.hidden = false;
+    pollIngestStatus();
+    if (ingestStatusPoller) clearInterval(ingestStatusPoller);
+    ingestStatusPoller = setInterval(pollIngestStatus, 1000);
+}
+
+function stopIngestStatusPolling() {
+    if (ingestStatusPoller) {
+        clearInterval(ingestStatusPoller);
+        ingestStatusPoller = null;
+    }
+}
+
 document.body.addEventListener("htmx:beforeRequest", function(e) {
     const path = e.detail.requestConfig?.path || "";
     spinnerLabel.textContent = getLabel(path);
     spinner.classList.add("spinner-active");
+    if (path.includes("/api/ingest/run")) {
+        startIngestStatusPolling();
+    } else {
+        resetIngestProgress();
+    }
 });
 
 document.body.addEventListener("htmx:afterRequest", function(e) {
     spinner.classList.remove("spinner-active");
+    stopIngestStatusPolling();
 
     const xhr = e.detail.xhr;
     const path = e.detail.requestConfig?.path || "";
@@ -115,9 +183,9 @@ document.body.addEventListener("htmx:afterRequest", function(e) {
             try {
                 const data = JSON.parse(xhr.responseText);
                 const summary = data.summary || {};
-                const processed = summary.processed ?? "?";
-                const skipped   = summary.skipped   ?? "?";
-                const failed    = summary.failed     ?? 0;
+                const processed = summary.files_processed ?? "?";
+                const skipped   = summary.files_skipped ?? "?";
+                const failed    = summary.files_failed ?? 0;
                 showToast(
                     `Sync complete — ${processed} processed, ${skipped} skipped${failed ? ", " + failed + " failed" : ""}`,
                     failed ? "warning" : "success",
@@ -134,6 +202,8 @@ document.body.addEventListener("htmx:afterRequest", function(e) {
 
 document.body.addEventListener("htmx:sendError", function() {
     spinner.classList.remove("spinner-active");
+    stopIngestStatusPolling();
+    resetIngestProgress();
     showToast("Network error — server may be unreachable.", "error", 0);
 });
 

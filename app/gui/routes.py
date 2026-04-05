@@ -14,6 +14,7 @@ from pathlib import Path
 from ..config.loader import load_config
 from ..config.schema import GlobalConfig
 from ..config.models_catalog import load_models_catalog
+from ..config.embedding_presets import load_embedding_presets
 from ..state.db import Database
 from ..state.stats import StatsService
 from ..vector.qdrant_client import VectorService
@@ -65,6 +66,11 @@ def get_vector_service() -> VectorService:
 @lru_cache(maxsize=1)
 def get_models_catalog() -> dict:
     return load_models_catalog()
+
+
+@lru_cache(maxsize=1)
+def get_embedding_presets() -> dict:
+    return load_embedding_presets()
 
 
 @lru_cache()
@@ -152,9 +158,18 @@ async def search_ui(request: Request):
 
 @router.get("/corpora/new", response_class=HTMLResponse)
 async def new_corpus_ui(request: Request):
+    config = get_config()
     return templates.TemplateResponse(
         "create_corpus.html",
-        {"request": request, "active_page": "corpora", "models_catalog": get_models_catalog()}
+        {
+            "request": request,
+            "active_page": "corpora",
+            "models_catalog": get_models_catalog(),
+            "embedding_presets": get_embedding_presets(),
+            "default_answer_provider": config.models.answer.provider if config.models.answer else "ollama",
+            "default_answer_model": config.models.answer.model if config.models.answer else "llama3",
+            "default_answer_base_url": config.models.answer.base_url if config.models.answer else "",
+        }
     )
 
 
@@ -164,12 +179,18 @@ async def create_corpus(
     corpus_id: str = Form(...),
     description: str = Form(...),
     source_path: str = Form(...),
+    embedding_preset: str = Form("epub_general"),
+    embed_provider: str = Form("openrouter"),
+    embed_model: str = Form(...),
+    embed_base_url: str = Form(""),
+    chunk_strategy: str = Form("heading_then_paragraph"),
+    chunk_max_tokens: int = Form(700),
+    chunk_overlap_tokens: int = Form(120),
     llm_provider: str = Form("ollama"),
     llm_model: str = Form("llama3"),
     llm_base_url: str = Form(""),
 ):
     corpus_service = get_corpus_service()
-    vector_service = get_vector_service()
 
     try:
         validate_corpus_id(corpus_id)
@@ -193,8 +214,17 @@ async def create_corpus(
                 llm_base_url.strip()
                 or PROVIDER_DEFAULT_BASE_URLS.get(llm_provider.strip(), "")
             ),
+            embedding_provider=embed_provider.strip(),
+            embedding_model=embed_model.strip(),
+            embedding_base_url=(
+                embed_base_url.strip()
+                or PROVIDER_DEFAULT_BASE_URLS.get(embed_provider.strip(), "")
+            ),
+            embedding_preset=embedding_preset.strip(),
+            chunk_strategy=chunk_strategy.strip(),
+            chunk_max_tokens=chunk_max_tokens,
+            chunk_overlap_tokens=chunk_overlap_tokens,
         )
-        vector_service.ensure_collection(corpus_id)
         logger.info(f"Created corpus: {corpus_id}")
         return RedirectResponse(url="/gui/dashboard", status_code=303)
     except Exception as e:
@@ -206,6 +236,7 @@ async def create_corpus(
 async def manage_corpus(request: Request, corpus_id: str):
     corpus_service = get_corpus_service()
     vector_service = get_vector_service()
+    db = get_database()
 
     try:
         validate_corpus_id(corpus_id)
@@ -218,12 +249,27 @@ async def manage_corpus(request: Request, corpus_id: str):
 
     v_count = vector_service.get_count(corpus_id)
     config = metadata.get("config", {})
+    embedding_config = config.get("models", {}).get("embeddings", {})
+    chunk_config = config.get("chunking", {}).get("default", {})
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) AS count FROM files WHERE corpus_id = ? AND status = 'FAILED'",
+            (corpus_id,),
+        )
+        failed_row = cursor.fetchone()
     corpus_data = {
         "corpus_id": metadata["corpus_id"],
         "description": metadata.get("description", ""),
         "source_path": metadata.get("source_path") or metadata.get("inbox_path", ""),
         "model": config.get("models", {}).get("answer", {}).get("model", "Default"),
         "provider": config.get("models", {}).get("answer", {}).get("provider", "ollama"),
+        "embedding_preset": config.get("embedding_preset"),
+        "embedding_model": embedding_config.get("model", get_config().models.embeddings.model),
+        "embedding_provider": embedding_config.get("provider", get_config().models.embeddings.provider),
+        "chunk_strategy": chunk_config.get("strategy", "pdf_sections"),
+        "chunk_max_tokens": chunk_config.get("max_tokens", 700),
+        "chunk_overlap_tokens": chunk_config.get("overlap_tokens", 80),
+        "failed_files": failed_row["count"] if failed_row else 0,
     }
 
     return templates.TemplateResponse("manage_corpus.html", {
@@ -297,6 +343,7 @@ async def settings_ui(request: Request):
         "embed_provider": embed.provider,
         "embed_base_url": embed.base_url or "",
         "embed_model": embed.model,
+        "embed_default_notice": "These defaults apply to connection tests and to new corpora only. Existing corpora keep the embedding model they were ingested with.",
         "answer_provider": answer.provider if answer else "ollama",
         "answer_base_url": (answer.base_url or "") if answer else "",
         "answer_model": answer.model if answer else "llama3",
