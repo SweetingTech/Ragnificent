@@ -78,3 +78,6 @@ rag_library/corpora/*/inbox/*
 
 # Docker
 docker-compose.override.yml
+
+# Claude Code working directory
+.claude/
