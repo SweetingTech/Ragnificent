@@ -39,8 +39,15 @@
                margin-top: 0.25rem; margin-bottom: 1rem;"></small>
 
         <label>Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional — leave blank for provider default)</span></label>
-        <input type="text" name="embed_base_url" value="{{ embed_base_url }}"
+        <input type="text" name="embed_base_url" id="embed_base_url" value="{{ embed_base_url }}"
                placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
+
+        <div style="display:flex; align-items:center; gap:1rem; margin-top:0.5rem;">
+            <button type="button" class="btn" onclick="testConnection('embedding')" id="embed_test_btn">
+                Test Connection
+            </button>
+            <span id="embed_test_result" style="font-size:0.9rem;"></span>
+        </div>
     </div>
 
     <!-- Answer / LLM Model -->
@@ -66,8 +73,15 @@
                margin-top: 0.25rem; margin-bottom: 1rem;"></small>
 
         <label>Base URL <span style="color: var(--text-secondary); font-weight: normal;">(optional)</span></label>
-        <input type="text" name="answer_base_url" value="{{ answer_base_url }}"
+        <input type="text" name="answer_base_url" id="answer_base_url" value="{{ answer_base_url }}"
                placeholder="e.g. http://localhost:11434 or http://ollama-host:11434">
+
+        <div style="display:flex; align-items:center; gap:1rem; margin-top:0.5rem;">
+            <button type="button" class="btn" onclick="testConnection('llm')" id="answer_test_btn">
+                Test Connection
+            </button>
+            <span id="answer_test_result" style="font-size:0.9rem;"></span>
+        </div>
     </div>
 
     <!-- API Key Status -->
@@ -202,5 +216,55 @@ document.getElementById("settings-form").addEventListener("submit", function() {
 // Populate on page load with currently saved values
 populateEmbedModels(SAVED_EMBED_MODEL);
 populateAnswerModels(SAVED_ANSWER_MODEL);
+
+// ---------------------------------------------------------------------------
+// Connection tester
+// ---------------------------------------------------------------------------
+async function testConnection(role) {
+    const isEmbed = role === "embedding";
+    const providerEl  = document.getElementById(isEmbed ? "embed_provider"      : "answer_provider");
+    const selectEl    = document.getElementById(isEmbed ? "embed_model_select"  : "answer_model_select");
+    const customEl    = document.getElementById(isEmbed ? "embed_model_custom"  : "answer_model_custom");
+    const baseUrlEl   = document.getElementById(isEmbed ? "embed_base_url"      : "answer_base_url");
+    const resultEl    = document.getElementById(isEmbed ? "embed_test_result"   : "answer_test_result");
+    const btnEl       = document.getElementById(isEmbed ? "embed_test_btn"      : "answer_test_btn");
+
+    const provider = providerEl.value;
+    const model    = selectEl.value === "__other__" ? customEl.value.trim() : selectEl.value;
+    const baseUrl  = baseUrlEl.value.trim();
+
+    if (!model || model === "__other__") {
+        resultEl.innerHTML = `<span style="color:var(--danger);">Select or enter a model first.</span>`;
+        return;
+    }
+
+    btnEl.disabled = true;
+    btnEl.textContent = "Testing…";
+    resultEl.innerHTML = `<span style="color:var(--text-secondary);">Connecting…</span>`;
+
+    try {
+        const resp = await fetch("/api/test-connection", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role, provider, model, base_url: baseUrl || null }),
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            resultEl.innerHTML = `<span style="color:var(--success);">&#10003; ${escHtml(data.detail)}</span>`;
+        } else {
+            resultEl.innerHTML = `<span style="color:var(--danger);">&#10007; ${escHtml(data.detail)}</span>`;
+        }
+    } catch (err) {
+        resultEl.innerHTML = `<span style="color:var(--danger);">&#10007; Network error: ${escHtml(String(err))}</span>`;
+    } finally {
+        btnEl.disabled = false;
+        btnEl.textContent = "Test Connection";
+    }
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
 </script>
 {% endblock %}
