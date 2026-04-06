@@ -2,14 +2,18 @@
 Query engine for RAG-based search and answer generation.
 Handles vector search, context assembly, and LLM answer generation.
 """
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 from pathlib import Path
 import yaml
 import time
 
 from ..vector.qdrant_client import VectorService
 from ..providers.base import EmbeddingProvider, LLMProvider
-from ..providers.factory import get_llm_provider
+from ..providers.factory import (
+    PROVIDER_DEFAULT_BASE_URLS,
+    get_embedding_provider,
+    get_llm_provider,
+)
 from ..providers.reranker import RerankProvider
 from ..services.corpus_service import validate_corpus_id, CorpusValidationError
 from ..utils.logging import setup_logging
@@ -19,7 +23,7 @@ from ..config.schema import GlobalConfig
 logger = setup_logging()
 
 # Default base URL for LLM providers (loaded from config when possible)
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_URL = PROVIDER_DEFAULT_BASE_URLS["ollama"]
 
 
 class QueryEngine:
@@ -71,6 +75,24 @@ class QueryEngine:
         else:
             self.base_url = default_base_url or DEFAULT_OLLAMA_URL
 
+        if self.config and getattr(self.config.models, "answer", None):
+            self.default_answer_provider = self.config.models.answer.provider
+            self.default_answer_base_url = (
+                self.config.models.answer.base_url
+                or DEFAULT_PROVIDER_BASE_URLS.get(
+                    self.config.models.answer.provider,
+                    DEFAULT_OLLAMA_URL,
+                )
+            )
+            self.default_answer_api_key = self.config.models.answer.api_key
+        else:
+            self.default_answer_provider = "ollama"
+            self.default_answer_base_url = self.base_url or DEFAULT_OLLAMA_URL
+            self.default_answer_api_key = None
+
+        self._corpus_meta_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self._embedder_cache: Dict[Tuple[str, str, str, Optional[str]], EmbeddingProvider] = {}
+
     def _get_corpus_config_path(self, corpus_id: str) -> Optional[Path]:
         """
         Get the path to corpus config file.
@@ -119,13 +141,86 @@ class QueryEngine:
                 if answer_config:
                     provider = answer_config.get("provider", "ollama")
                     model = answer_config.get("model", "llama3")
-                    base_url = answer_config.get("base_url") or self.base_url
-                    api_key = answer_config.get("api_key")
+                    base_url = (
+                        answer_config.get("base_url")
+                        or DEFAULT_PROVIDER_BASE_URLS.get(provider, self.default_answer_base_url)
+                    )
+                    if "api_key" in answer_config:
+                        api_key = answer_config.get("api_key")
+                    elif provider == self.default_answer_provider:
+                        api_key = self.default_answer_api_key
+                    else:
+                        api_key = None
                     return get_llm_provider(provider, base_url=base_url, model=model, api_key=api_key)
             except Exception as e:
                 logger.warning(f"Failed to load corpus LLM config for {corpus_id}: {e}")
 
         return self.default_llm
+
+    def _load_corpus_meta(self, corpus_id: str) -> Dict[str, Any]:
+        config_path = self._get_corpus_config_path(corpus_id)
+        if not config_path:
+            return {}
+        try:
+            mtime = config_path.stat().st_mtime
+            cached = self._corpus_meta_cache.get(corpus_id)
+            if cached and cached[0] == mtime:
+                return cached[1]
+
+            with open(config_path, encoding="utf-8") as f:
+                meta = yaml.safe_load(f) or {}
+            self._corpus_meta_cache[corpus_id] = (mtime, meta)
+            return meta
+        except Exception as e:
+            logger.warning(f"Failed to load corpus config for {corpus_id}: {e}")
+            return {}
+
+    def _resolve_embedder(self, corpus_id: str) -> EmbeddingProvider:
+        meta = self._load_corpus_meta(corpus_id)
+        embedding_config = meta.get("models", {}).get("embeddings")
+        if not embedding_config:
+            return self.embedder
+
+        default_embeddings = getattr(getattr(self.config, "models", None), "embeddings", None)
+        default_provider = default_embeddings.provider if default_embeddings else "ollama"
+        default_model = default_embeddings.model if default_embeddings else "nomic-embed-text"
+        default_base_url = default_embeddings.base_url if default_embeddings else self.base_url
+        default_api_key = default_embeddings.api_key if default_embeddings else None
+
+        provider = embedding_config.get("provider", default_provider)
+        model = embedding_config.get("model", default_model)
+        base_url = (
+            embedding_config.get("base_url")
+            or DEFAULT_PROVIDER_BASE_URLS.get(provider, default_base_url)
+        )
+        if "api_key" in embedding_config:
+            api_key = embedding_config.get("api_key")
+        elif provider == default_provider:
+            api_key = default_api_key
+        else:
+            api_key = None
+
+        if (
+            provider == default_provider
+            and model == default_model
+            and base_url == default_base_url
+            and api_key == default_api_key
+        ):
+            return self.embedder
+
+        cache_key = (provider, base_url, model, api_key)
+        cached = self._embedder_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        embedder = get_embedding_provider(
+            provider,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+        )
+        self._embedder_cache[cache_key] = embedder
+        return embedder
 
     def query(
         self,
@@ -165,12 +260,19 @@ class QueryEngine:
         hits = []
         if corpus_id:
             try:
-                query_vector = self.embedder.embed([query_text])[0]
+                embedder = self._resolve_embedder(corpus_id)
+                query_vector = embedder.embed([query_text])[0]
                 # If reranking is enabled, fetch more candidates initially
                 initial_k = top_k * 3 if self.reranker else top_k
                 hits = self.vector_service.search(corpus_id, query_vector, limit=initial_k)
             except Exception as e:
                 logger.error(f"Search failed: {e}")
+                return {
+                    "query": query_text,
+                    "hits": [],
+                    "answer": f"Search failed: {e}",
+                    "time": time.time() - start_time
+                }
 
         # 2. Format hits
         formatted_hits = []
@@ -207,7 +309,12 @@ class QueryEngine:
         if llm_model:
             # Ad-hoc model override
             try:
-                llm = get_llm_provider("ollama", base_url=self.base_url, model=llm_model)
+                llm = get_llm_provider(
+                    self.default_answer_provider,
+                    base_url=self.default_answer_base_url,
+                    model=llm_model,
+                    api_key=self.default_answer_api_key,
+                )
             except Exception as e:
                 logger.warning(f"Failed to create LLM with model {llm_model}: {e}")
                 llm = self.default_llm

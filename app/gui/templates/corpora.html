@@ -15,7 +15,7 @@
             <tr style="text-align: left; border-bottom: 1px solid var(--border);">
                 <th style="padding: 1rem;">ID</th>
                 <th style="padding: 1rem;">Description</th>
-                <th style="padding: 1rem;">Location</th>
+                <th style="padding: 1rem;">Paths</th>
                 <th style="padding: 1rem;">Actions</th>
             </tr>
         </thead>
@@ -24,7 +24,10 @@
             <tr style="border-bottom: 1px solid var(--bg-body);">
                 <td style="padding: 1rem; font-weight: bold;">{{ corpus.corpus_id }}</td>
                 <td style="padding: 1rem; color: var(--text-secondary);">{{ corpus.description }}</td>
-                <td style="padding: 1rem; font-family: monospace; font-size: 0.9rem;">{{ corpus.inbox_path }}</td>
+                <td style="padding: 1rem; font-family: monospace; font-size: 0.85rem;">
+                    <div><span style="color: var(--text-secondary); font-family: inherit;">Source:</span> {{ corpus.source_path or "Not set" }}</div>
+                    <div style="margin-top: 0.35rem;"><span style="color: var(--text-secondary); font-family: inherit;">Inbox:</span> {{ corpus.inbox_path }}</div>
+                </td>
                 <td style="padding: 1rem; text-align: right;">
                     <a href="/gui/corpora/{{ corpus.corpus_id }}" class="btn" style="font-size: 0.8rem;">Manage</a>
                 </td>

@@ -13,14 +13,19 @@ ingest:
 library_root: rag_library
 models:
   answer:
-    model: claude-opus-4-6
-    provider: anthropic
+    base_url: https://api.openai.com/v1
+    model: gpt-5.4
+    provider: openai
   embeddings:
-    base_url: http://localhost:11434
-    model: nomic-embed-text
+    base_url: https://openrouter.ai/api/v1
+    model: qwen/qwen3-embedding-8b
     provider: openrouter
 ocr:
-  backend: ocrmypdf
+  backend: ollama_glm_ocr
+  ollama:
+    base_url: http://localhost:11434
+    model: hf.co/ggml-org/GLM-OCR-GGUF:Q8_0
+    prompt: "Text Recognition:"
   ocrmypdf:
     cache_dir: rag_library/cache/ocr
     clean: true
@@ -34,5 +39,5 @@ vector_db:
   collection_prefix: instance01
   hnsw_on_disk: true
   on_disk: true
-  url: http://localhost:6333
+  url: http://127.0.0.1:6333
   vector_size: null

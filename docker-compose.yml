@@ -1,5 +1,3 @@
-
-
 services:
   qdrant:
     image: qdrant/qdrant:latest
@@ -7,22 +5,25 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
-    restart: always
+    restart: unless-stopped
 
-  librarian:
+  ragnificent:
     build: .
+    env_file:
+      - .env
     volumes:
-      - ./rag_library:/data/library
-      - ./rag_library/state:/data/state
-      - ./config.yaml:/app/config.yaml
-    environment:
-      - LIBRARY_ROOT=/data/library
-      - STATE_DB_PATH=/data/state/ingest.sqlite
-      - QDRANT_URL=http://qdrant:6333
+      - ./rag_library:/app/rag_library
+      - ./config.docker.yaml:/app/config.yaml
+      - ./models_catalog.yaml:/app/models_catalog.yaml:ro
+      - ./embedding_presets.yaml:/app/embedding_presets.yaml:ro
+      # Optional: mount host document folders here and point source_path at the
+      # container-visible path, for example:
+      # - D:/Books:/imports:ro
     depends_on:
       - qdrant
     ports:
       - "8008:8008"
+    restart: unless-stopped
 
 volumes:
   qdrant_storage:

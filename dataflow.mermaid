@@ -1,27 +1,42 @@
-Graph TD
-    subgraph User Interaction
-    A[User/Agent] -->|1. Creates Librarian| B(GUI/API)
-    A -->|2. Drops Files| C(Source Folder)
-    A -->|5. Queries| B
+graph TD
+    subgraph Setup
+        A[User or Agent] -->|Create corpus| B[GUI or REST API]
+        B -->|Apply preset or custom overrides| C[Corpus config]
+        D[Embedding presets] --> B
+        E[Source path or inbox folder] -->|Files available for sync| F
     end
-    
-    subgraph Ingestion Pipeline
-    B -->|3. Trigger Sync| D[Pipeline Engine]
-    D -->|Scan| C
-    D -->|Extract Text| E[Extration Lane]
-    E -->|Native PDF| F[PyMuPDF]
-    E -->|Code/Text| G[Text Loader]
-    E --> H{Chunker}
-    H -->|Split| I[Chunks]
-    I -->|Embed| J[Ollama/Provider]
-    J -->|Upsert| K[(Qdrant Vector DB)]
-    D -->|Update State| L[(SQLite State DB)]
+
+    subgraph Ingestion
+        B -->|Sync now or retry failed| F[Ingestion pipeline]
+        F -->|Scan files| E
+        F -->|Read effective corpus settings| C
+        F --> G{Extraction lane}
+        G -->|PDF| H[PyMuPDF plus OCR fallback]
+        G -->|EPUB| I[EPUB extractor]
+        G -->|Images| J[Tesseract or PaddleOCR]
+        G -->|Code or text| K[Text loader]
+        H --> L{Chunk strategy}
+        I --> L
+        J --> L
+        K --> L
+        L -->|Heading aware| M[Heading then paragraph]
+        L -->|Paragraph aware| N[PDF sections]
+        L -->|Code aware| O[Code symbols]
+        M --> P[Chunks]
+        N --> P
+        O --> P
+        P --> Q[Embedding provider]
+        Q -->|Ollama / OpenAI / OpenRouter| R[(Qdrant per-corpus collections)]
+        F -->|Track hashes, status, failures, progress| S[(SQLite state DB)]
     end
-    
-    subgraph Retrieval Pipeline
-    B -->|Query| M[Query Engine]
-    M -->|Embed Query| J
-    M -->|Search| K
-    K -->|Hits| M
-    M -->|Results| A
+
+    subgraph Retrieval
+        T[User or Agent query] --> U[Query engine]
+        U -->|List corpora when needed| V[Corpus API]
+        U -->|Load corpus config| C
+        U -->|Embed query with corpus embedding model| Q
+        U -->|Search top-k| R
+        R -->|Hits| W[Optional reranker]
+        W --> X[Answer provider]
+        X -->|Ollama / OpenAI / Anthropic / OpenRouter| Y[Answer plus citations]
     end

@@ -16,11 +16,10 @@
         </select>
 
         <label style="display:block; margin-bottom:0.5rem; margin-top: 1rem;">Model Override</label>
-        <input type="text" name="llm_model" value="{{ default_model }}"
+        <input type="text" name="llm_model" value=""
                placeholder="e.g. llama3, gpt-4o-mini, claude-3-5-sonnet-20241022">
         <small style="color: var(--text-secondary); margin-bottom: 1rem; display:block;">
-            Leave as-is to use the librarian's configured model. Override for ad-hoc chat.
-            Configure defaults in <a href="/gui/settings">Settings</a>.
+            Leave blank to use the librarian's configured model. If you override it here, the model will run through the default answer provider from <a href="/gui/settings">Settings</a> (currently {{ default_answer_provider }}).
         </small>
 
         <label style="display:block; margin-bottom:0.5rem;">Your Question</label>
@@ -40,7 +39,7 @@
         <input type="text" name="llm_model" value="{{ default_model }}"
                placeholder="e.g. llama3, gpt-4o-mini">
         <small style="color: var(--text-secondary); display:block; margin-bottom: 1rem;">
-            Configure the default provider in <a href="/gui/settings">Settings</a>.
+            This uses the default answer provider from <a href="/gui/settings">Settings</a> (currently {{ default_answer_provider }}).
         </small>
 
         <div style="display: flex; gap: 1rem; margin-top: 1rem;">

@@ -65,10 +65,19 @@ Desktop.ini
 rag_library/state/
 rag_library/cache/
 rag_library/.locks/
+rag_library/logs/*
+!rag_library/logs/.gitkeep
+rag_library/logs/ingest/*
+!rag_library/logs/ingest/.gitkeep
 
 # User Content (Inbox) - Keep the folder, ignore the content
 rag_library/corpora/*/inbox/*
 !rag_library/corpora/*/inbox/.gitkeep
+
+# Local-only troubleshooting and test assets
+tests/
+changelog.md
+20260129_Changelog.md
 
 # Local configuration overrides (optional, but usually we keep config.yaml as the template/default)
 # config.yaml

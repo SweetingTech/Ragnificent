@@ -3,11 +3,16 @@ Ollama provider implementations for embeddings and LLM.
 Uses the Ollama Python client with explicit host configuration (no global env vars).
 """
 from typing import List, Optional
+import re
 from ollama import Client
 from .base import EmbeddingProvider, LLMProvider
 from ..utils.logging import setup_logging
 
 logger = setup_logging()
+
+OLLAMA_EMBED_BATCH_SIZE = 32
+_REPEATED_PUNCTUATION_RUN_RE = re.compile(r"([.\-_*=#~•·])\1{5,}\d*")
+_LONG_TOKEN_RE = re.compile(r"\S{65,}")
 
 
 class OllamaProvider(EmbeddingProvider):
@@ -26,6 +31,62 @@ class OllamaProvider(EmbeddingProvider):
         # Use explicit Client instead of global env var
         self._client = Client(host=base_url)
 
+    def _normalize_embeddings_response(self, resp) -> List[List[float]]:
+        """Handle both current and legacy Ollama client response shapes."""
+        if hasattr(resp, "embeddings"):
+            return resp.embeddings
+        if hasattr(resp, "embedding"):
+            return [resp.embedding]
+        if isinstance(resp, dict):
+            if "embeddings" in resp:
+                return resp["embeddings"]
+            if "embedding" in resp:
+                return [resp["embedding"]]
+        raise RuntimeError("Unexpected Ollama embeddings response format.")
+
+    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+        if hasattr(self._client, "embed"):
+            resp = self._client.embed(model=self.model, input=texts)
+            return self._normalize_embeddings_response(resp)
+
+        if hasattr(self._client, "embeddings"):
+            batched: List[List[float]] = []
+            for text in texts:
+                resp = self._client.embeddings(model=self.model, prompt=text)
+                batched.extend(self._normalize_embeddings_response(resp))
+            return batched
+
+        raise RuntimeError("Ollama client does not expose embed or embeddings APIs.")
+
+    def _normalize_long_token(self, token: str) -> str:
+        """
+        Break up pathological tokens produced by PDF extraction.
+
+        Table-of-contents leaders and other dense punctuation runs can trigger
+        Ollama context-length errors even when the overall chunk is small.
+        """
+        collapsed = _REPEATED_PUNCTUATION_RUN_RE.sub(" ", token).strip()
+        if not collapsed:
+            return ""
+
+        if len(collapsed) <= 64:
+            return collapsed
+
+        # Preserve content while making it tokenizable by splitting long runs.
+        return " ".join(
+            collapsed[i:i + 48]
+            for i in range(0, len(collapsed), 48)
+        )
+
+    def _sanitize_text(self, text: str) -> str:
+        flattened = text.replace("\n", " ")
+        flattened = _REPEATED_PUNCTUATION_RUN_RE.sub(" ", flattened)
+        flattened = _LONG_TOKEN_RE.sub(
+            lambda match: self._normalize_long_token(match.group(0)),
+            flattened,
+        )
+        return " ".join(flattened.split())
+
     def embed(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for a list of texts.
@@ -39,16 +100,32 @@ class OllamaProvider(EmbeddingProvider):
         if not texts:
             return []
 
-        # Clean newlines to avoid issues with some models
-        clean_texts = [text.replace("\n", " ") for text in texts]
+        clean_texts = [self._sanitize_text(text) for text in texts]
 
         try:
-            # Ollama's embed endpoint accepts an array of strings
-            resp = self._client.embed(model=self.model, input=clean_texts)
-            return resp.embeddings
+            return self._embed_batch(clean_texts)
         except Exception as e:
             logger.error(f"Batch embedding failed: {e}")
-            raise
+            if len(clean_texts) == 1:
+                raise
+
+        recovered: List[List[float]] = []
+        for start in range(0, len(clean_texts), OLLAMA_EMBED_BATCH_SIZE):
+            batch = clean_texts[start:start + OLLAMA_EMBED_BATCH_SIZE]
+            try:
+                recovered.extend(self._embed_batch(batch))
+                continue
+            except Exception as batch_error:
+                logger.warning(
+                    "Ollama batch of %s texts failed; falling back to single-item embeds: %s",
+                    len(batch),
+                    batch_error,
+                )
+
+            for text in batch:
+                recovered.extend(self.embed([text]))
+
+        return recovered
 
 
 class OllamaLLM(LLMProvider):

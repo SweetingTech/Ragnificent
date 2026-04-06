@@ -64,4 +64,14 @@ if (Test-Path "pyproject.toml") {
     pip install -e .
 }
 
+if (Get-Command ollama -ErrorAction SilentlyContinue) {
+    Write-Host "Pulling required Ollama models..."
+    python scripts/pull_ollama_models.py --mode required
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Model pull did not complete cleanly. You can retry with: python scripts/pull_ollama_models.py --mode required"
+    }
+} else {
+    Write-Host "Ollama not found on PATH. Skipping model pull."
+}
+
 Write-Host "Setup complete."

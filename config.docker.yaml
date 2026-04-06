@@ -1,0 +1,45 @@
+library_root: rag_library
+
+ingest:
+  poll_interval_seconds: 300
+  max_parallel_files: 1
+  lock_file: rag_library/.locks/ingest.lock
+  ocr_trigger:
+    min_chars_per_page: 200
+    min_dictionary_word_ratio: 0.35
+
+extraction:
+  pdf_backend: pymupdf
+  normalize:
+    dehyphenate: true
+    strip_headers_footers: true
+
+ocr:
+  backend: ocrmypdf
+  ocrmypdf:
+    language: eng
+    deskew: true
+    rotate_pages: true
+    clean: true
+    cache_dir: rag_library/cache/ocr
+
+models:
+  embeddings:
+    provider: openrouter
+    base_url: https://openrouter.ai/api/v1
+    model: qwen/qwen3-embedding-8b
+  answer:
+    provider: openai
+    base_url: https://api.openai.com/v1
+    model: gpt-5.4
+
+vector_db:
+  backend: qdrant
+  url: http://qdrant:6333
+  collection_prefix: instance01
+  vector_size: null
+  on_disk: true
+  hnsw_on_disk: true
+
+state_db:
+  path: rag_library/state/ingest.sqlite

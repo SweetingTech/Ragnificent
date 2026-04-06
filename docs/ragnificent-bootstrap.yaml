@@ -1,0 +1,62 @@
+service: ragnificent
+version: 1
+
+purpose: >
+  Query local RAG corpora through the Ragnificent API.
+  Use the API as the source of truth. Do not guess corpus IDs.
+
+base_url: http://<host>:8008
+
+healthcheck: /health
+
+discover:
+  corpora: /api/corpora
+  corpus_detail: /api/corpora/{corpus_id}
+
+actions:
+  query:
+    method: POST
+    path: /api/query
+    body:
+      query: string
+      corpus_id: string
+      top_k: 5
+      llm_model: optional string
+  ingest:
+    method: POST
+    path: /api/ingest/run?corpus_id={corpus_id}
+  retry_failed:
+    method: POST
+    path: /api/ingest/run?corpus_id={corpus_id}&retry_failed_only=true
+  create_corpus:
+    method: POST
+    path: /api/corpora
+
+rules:
+  - call /health first
+  - call /api/corpora before querying
+  - only query corpora where vector_count > 0
+  - if corpus_id is omitted, /api/query is chat mode, not cross-corpus retrieval
+  - treat hits as grounding truth
+  - use answer as a convenience draft, not as the only source of truth
+  - if answer starts with "Error generating answer:", synthesize from hits instead
+
+query_workflow:
+  - GET /health
+  - GET /api/corpora
+  - choose the best corpus_id with vector_count > 0
+  - POST /api/query with query + corpus_id
+  - return answer with citations from hits[].payload.file_name
+
+response_notes:
+  answer: model-generated response from retrieved context
+  hits: retrieved chunks for grounding and citations
+  citations: use hits[].payload.file_name and chunk/page metadata when present
+
+fallbacks:
+  - if no corpus has relevant indexed content, create one or fail cleanly
+  - if retrieval is weak, narrow the question and query again
+  - if answer generation fails but hits exist, answer from hits
+
+see_also:
+  - docs/agent-integration.md

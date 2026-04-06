@@ -47,7 +47,13 @@ def _default_url(provider: str) -> str:
 def _test_ollama_embed(base_url: str, model: str):
     try:
         from ollama import Client
-        Client(host=base_url).embed(model=model, input=["ping"])
+        client = Client(host=base_url)
+        if hasattr(client, "embed"):
+            client.embed(model=model, input=["ping"])
+        elif hasattr(client, "embeddings"):
+            client.embeddings(model=model, prompt="ping")
+        else:
+            raise RuntimeError("Ollama client does not expose embed or embeddings APIs.")
         return True, f"Connected to Ollama at {base_url}. Model '{model}' responded."
     except Exception as e:
         return False, str(e)
@@ -88,11 +94,31 @@ def _test_openai_llm(base_url: str, model: str, api_key: str, provider: str = "o
         headers["HTTP-Referer"] = "http://localhost:8008"
     try:
         with httpx.Client(timeout=30) as client:
-            resp = client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                headers=headers,
-                json={"model": model, "messages": [{"role": "user", "content": "Reply with one word: ready"}], "max_tokens": 10},
-            )
+            base_payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Reply with one word: ready"}],
+            }
+            payloads = [
+                {**base_payload, "max_completion_tokens": 16},
+                {**base_payload, "max_tokens": 16},
+            ]
+            resp = None
+            for payload in payloads:
+                resp = client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                if resp.status_code == 200:
+                    break
+                body = resp.text.lower()
+                unsupported_token_param = (
+                    resp.status_code == 400 and
+                    ("unsupported parameter" in body or "not supported" in body) and
+                    ("max_tokens" in body or "max_completion_tokens" in body)
+                )
+                if not unsupported_token_param:
+                    break
         if resp.status_code == 200:
             reply = resp.json()["choices"][0]["message"]["content"].strip()[:80]
             return True, f"Connected. Model '{model}' replied: \"{reply}\""

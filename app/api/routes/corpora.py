@@ -4,6 +4,7 @@ Corpora API routes — agent-facing endpoints for discovering and managing RAG d
 Designed for programmatic access by AI agents and other clients.
 """
 from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
@@ -39,6 +40,14 @@ class CorpusDetail(CorpusSummary):
     config: Dict[str, Any]
 
 
+class CorpusLiveStats(BaseModel):
+    corpus_id: str
+    vector_count: int
+    total_files: int
+    success_files: int
+    failed_files: int
+
+
 class CreateCorpusRequest(BaseModel):
     """Request body for creating a new corpus via the API."""
     corpus_id: str
@@ -46,6 +55,14 @@ class CreateCorpusRequest(BaseModel):
     source_path: str
     llm_model: str = "llama3"
     llm_provider: str = "ollama"
+    llm_base_url: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_base_url: Optional[str] = None
+    embedding_preset: Optional[str] = None
+    chunk_strategy: str = "pdf_sections"
+    chunk_max_tokens: int = 700
+    chunk_overlap_tokens: int = 80
 
 
 class CreateCorpusResponse(BaseModel):
@@ -107,6 +124,56 @@ async def list_corpora(
     return [_build_summary(m, vector_service) for m in all_meta]
 
 
+@router.get("/{corpus_id}/stats", response_model=CorpusLiveStats)
+async def get_corpus_stats(
+    corpus_id: str,
+    corpus_service: CorpusService = Depends(get_corpus_service),
+    vector_service: VectorService = Depends(get_vector_service),
+    db: Database = Depends(get_database),
+):
+    try:
+        validate_corpus_id(corpus_id)
+    except CorpusValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    meta = corpus_service.get_corpus_metadata(corpus_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Corpus '{corpus_id}' not found")
+
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE corpus_id = ?",
+            (corpus_id,),
+        )
+        total_files = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE corpus_id = ? AND status = 'SUCCESS'",
+            (corpus_id,),
+        )
+        success_files = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE corpus_id = ? AND status = 'FAILED'",
+            (corpus_id,),
+        )
+        failed_files = cursor.fetchone()[0]
+
+    payload = CorpusLiveStats(
+        corpus_id=corpus_id,
+        vector_count=vector_service.get_count(corpus_id, fresh=True),
+        total_files=total_files,
+        success_files=success_files,
+        failed_files=failed_files,
+    )
+    return JSONResponse(
+        content=payload.model_dump(),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 
 
 @router.get("/{corpus_id}", response_model=CorpusDetail)
@@ -139,7 +206,6 @@ async def get_corpus(
 async def create_corpus(
     body: CreateCorpusRequest,
     corpus_service: CorpusService = Depends(get_corpus_service),
-    vector_service: VectorService = Depends(get_vector_service),
 ):
     """
     Create a new RAG corpus (database) via the API.
@@ -183,9 +249,16 @@ async def create_corpus(
             source_path=source_path,
             llm_model=body.llm_model,
             llm_provider=body.llm_provider,
+            llm_base_url=body.llm_base_url,
+            embedding_provider=body.embedding_provider,
+            embedding_model=body.embedding_model,
+            embedding_base_url=body.embedding_base_url,
+            embedding_preset=body.embedding_preset,
+            chunk_strategy=body.chunk_strategy,
+            chunk_max_tokens=body.chunk_max_tokens,
+            chunk_overlap_tokens=body.chunk_overlap_tokens,
         )
         created_on_disk = True
-        vector_service.ensure_collection(body.corpus_id)
         logger.info(f"API: created corpus {body.corpus_id}")
     except Exception as e:
         logger.exception(f"Failed to create corpus {body.corpus_id}")

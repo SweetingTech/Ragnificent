@@ -2,11 +2,38 @@
 Tesseract OCR engine implementation.
 """
 import io
+import os
+import shutil
 from typing import Optional
 from .ocr_base import OCREngine
 from ..utils.logging import setup_logging
 
 logger = setup_logging()
+
+
+def _resolve_tesseract_cmd() -> Optional[str]:
+    """
+    Resolve the Tesseract executable path.
+
+    On Windows, installers often place Tesseract in Program Files without
+    updating PATH for already-running shells, so we probe the common install
+    locations explicitly.
+    """
+    binary = shutil.which("tesseract")
+    if binary:
+        return binary
+
+    if os.name != "nt":
+        return None
+
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 def _load_tesseract_dependencies():
     """
@@ -27,6 +54,14 @@ def _load_tesseract_dependencies():
             "Tesseract OCR dependencies are not installed. "
             "Install the 'pytesseract' and 'Pillow' packages to use this feature."
         ) from exc
+
+    tesseract_cmd = _resolve_tesseract_cmd()
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+    else:
+        logger.warning(
+            "Tesseract executable was not found on PATH or in the default Windows install path."
+        )
     return pytesseract, Image
 
 class TesseractEngine(OCREngine):
