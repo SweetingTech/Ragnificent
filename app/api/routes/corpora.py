@@ -4,6 +4,7 @@ Corpora API routes — agent-facing endpoints for discovering and managing RAG d
 Designed for programmatic access by AI agents and other clients.
 """
 from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
@@ -37,6 +38,14 @@ class CorpusSummary(BaseModel):
 class CorpusDetail(CorpusSummary):
     """Full detail for a single corpus, including chunking and model config."""
     config: Dict[str, Any]
+
+
+class CorpusLiveStats(BaseModel):
+    corpus_id: str
+    vector_count: int
+    total_files: int
+    success_files: int
+    failed_files: int
 
 
 class CreateCorpusRequest(BaseModel):
@@ -113,6 +122,56 @@ async def list_corpora(
     """
     all_meta = corpus_service.get_all_corpora()
     return [_build_summary(m, vector_service) for m in all_meta]
+
+
+@router.get("/{corpus_id}/stats", response_model=CorpusLiveStats)
+async def get_corpus_stats(
+    corpus_id: str,
+    corpus_service: CorpusService = Depends(get_corpus_service),
+    vector_service: VectorService = Depends(get_vector_service),
+    db: Database = Depends(get_database),
+):
+    try:
+        validate_corpus_id(corpus_id)
+    except CorpusValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    meta = corpus_service.get_corpus_metadata(corpus_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Corpus '{corpus_id}' not found")
+
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE corpus_id = ?",
+            (corpus_id,),
+        )
+        total_files = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE corpus_id = ? AND status = 'SUCCESS'",
+            (corpus_id,),
+        )
+        success_files = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE corpus_id = ? AND status = 'FAILED'",
+            (corpus_id,),
+        )
+        failed_files = cursor.fetchone()[0]
+
+    payload = CorpusLiveStats(
+        corpus_id=corpus_id,
+        vector_count=vector_service.get_count(corpus_id, fresh=True),
+        total_files=total_files,
+        success_files=success_files,
+        failed_files=failed_files,
+    )
+    return JSONResponse(
+        content=payload.model_dump(),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 

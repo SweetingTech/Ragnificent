@@ -6,6 +6,8 @@ import asyncio
 import threading
 import time
 import uuid
+from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -36,6 +38,31 @@ class IngestResponse(BaseModel):
     status: str
     message: str
     summary: Optional[Dict[str, Any]] = None
+
+
+def _build_run_log_writer(config: GlobalConfig, corpus_id: Optional[str], job_id: str):
+    log_root = Path(config.library_root) / "logs" / "ingest"
+    log_root.mkdir(parents=True, exist_ok=True)
+    safe_corpus = corpus_id or "all"
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_root / f"{timestamp}_{safe_corpus}_{job_id[:8]}.log"
+
+    def write(message: str) -> None:
+        line = f"{datetime.now().isoformat(timespec='seconds')} {message}\n"
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+
+    return log_path, write
+
+
+def _invalidate_vector_cache(pipeline: Any, corpus_id: Optional[str]) -> None:
+    vector_service = getattr(pipeline, "vector_service", None)
+    if vector_service is None or not hasattr(vector_service, "invalidate_cache"):
+        return
+    if corpus_id:
+        vector_service.invalidate_cache(corpus_id)
+    else:
+        vector_service.invalidate_cache()
 
 
 def _set_ingest_state(**updates: Any) -> None:
@@ -115,7 +142,10 @@ async def run_ingest(
             raise HTTPException(status_code=400, detail=str(e))
 
     try:
+        _invalidate_vector_cache(pipeline, corpus_id)
+
         job_id = str(uuid.uuid4())
+        log_path, run_logger = _build_run_log_writer(pipeline.config, corpus_id, job_id)
         desc = corpus_id or "all corpora"
         if source_path:
             desc = f"{corpus_id} (source: {source_path})"
@@ -139,6 +169,10 @@ async def run_ingest(
             percent_complete=0.0,
             retry_failed_only=retry_failed_only,
             summary=None,
+            log_file=str(log_path),
+        )
+        run_logger(
+            f"JOB id={job_id} description={desc} qdrant_url={pipeline.config.vector_db.url}"
         )
 
         def progress_callback(update: Dict[str, Any]) -> None:
@@ -150,6 +184,7 @@ async def run_ingest(
             source_path,
             retry_failed_only,
             progress_callback,
+            run_logger,
         )
 
         _set_ingest_state(
@@ -161,6 +196,14 @@ async def run_ingest(
             percent_complete=100.0,
             finished_at=time.time(),
         )
+        run_logger(
+            "SUMMARY "
+            f"total_files={summary.get('total_files', 0)} "
+            f"files_processed={summary.get('files_processed', 0)} "
+            f"files_skipped={summary.get('files_skipped', 0)} "
+            f"files_failed={summary.get('files_failed', 0)}"
+        )
+        _invalidate_vector_cache(pipeline, corpus_id)
 
         return IngestResponse(
             status="success",
@@ -176,6 +219,11 @@ async def run_ingest(
                 message=message,
                 finished_at=time.time(),
             )
+            log_path = _INGEST_STATE.get("log_file")
+            if log_path:
+                with Path(log_path).open("a", encoding="utf-8") as handle:
+                    handle.write(f"{datetime.now().isoformat(timespec='seconds')} RUN ERROR reason={message}\n")
+            _invalidate_vector_cache(pipeline, corpus_id)
             return JSONResponse(
                 status_code=503,
                 content=IngestResponse(status="error", message=message).model_dump(
@@ -191,6 +239,11 @@ async def run_ingest(
             message=f"Ingestion failed: {e}",
             finished_at=time.time(),
         )
+        log_path = _INGEST_STATE.get("log_file")
+        if log_path:
+            with Path(log_path).open("a", encoding="utf-8") as handle:
+                handle.write(f"{datetime.now().isoformat(timespec='seconds')} RUN ERROR reason={e}\n")
+        _invalidate_vector_cache(pipeline, corpus_id)
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 
@@ -202,4 +255,11 @@ async def ingest_status():
     Returns:
         Current status of the ingestion system
     """
-    return _get_ingest_state()
+    return JSONResponse(
+        content=_get_ingest_state(),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )

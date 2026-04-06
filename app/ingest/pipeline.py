@@ -43,6 +43,10 @@ CHUNK_STRATEGY_ALIASES = {
     "code_symbols": "code_symbols",
 }
 
+OLLAMA_EMBED_MAX_TOKENS_CAP = 220
+OLLAMA_EMBED_OVERLAP_CAP = 40
+OLLAMA_EMBED_MAX_CHARS_CAP = 800
+
 
 class IngestionPipeline:
     """Pipeline for ingesting documents into the vector database."""
@@ -61,8 +65,9 @@ class IngestionPipeline:
         self.vector_service = vector_service
 
         # Select OCR Engine
-        from ..engines.ocr_tesseract import TesseractEngine
+        from ..engines.ocr_ollama import OllamaOCREngine
         from ..engines.ocr_my_pdf import OCRmyPDFEngine
+        from ..engines.ocr_tesseract import TesseractEngine
 
         # Determine the OCR engine based on config
         ocr_backend = config.ocr.backend.lower()
@@ -79,6 +84,13 @@ class IngestionPipeline:
                 image_ocr_engine = paddle_engine
             except ImportError:
                 logger.warning("PaddleOCR not installed, falling back to defaults")
+        elif ocr_backend in {"ollama", "ollama_glm_ocr", "glm_ocr"}:
+            try:
+                ollama_engine = OllamaOCREngine(config, fallback_engine=TesseractEngine())
+                pdf_ocr_engine = ollama_engine
+                image_ocr_engine = ollama_engine
+            except Exception:
+                logger.exception("Failed to initialize Ollama OCR, falling back to defaults")
 
         # Initialize extractors
         from ..engines.scanned_pdf_extractor import ScannedPdfExtractor
@@ -222,6 +234,16 @@ class IngestionPipeline:
         strategy = CHUNK_STRATEGY_ALIASES.get(strategy_name, "pdf_sections")
         max_tokens = int(chunk_defaults.get("max_tokens", 700))
         overlap_tokens = int(chunk_defaults.get("overlap_tokens", 80))
+        embed_settings = self._get_embedding_settings(corpus_config)
+        max_chars = None
+
+        # Ollama embedding models can reject chunks well below the user-configured
+        # size when PDF extraction produces dense tokenization. Apply a conservative
+        # runtime cap so ingest succeeds without forcing users to hand-tune per corpus.
+        if embed_settings["provider"] == "ollama":
+            max_tokens = min(max_tokens, OLLAMA_EMBED_MAX_TOKENS_CAP)
+            overlap_tokens = min(overlap_tokens, OLLAMA_EMBED_OVERLAP_CAP)
+            max_chars = OLLAMA_EMBED_MAX_CHARS_CAP
 
         if strategy == "code_symbols":
             return CodeSymbolChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
@@ -229,7 +251,11 @@ class IngestionPipeline:
             return MarkdownChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
         if file_ext == ".py":
             return CodeSymbolChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
-        return PdfSectionChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        return PdfSectionChunker(
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
+            max_chars=max_chars,
+        )
 
     def _emit_progress(
         self,
@@ -246,6 +272,7 @@ class IngestionPipeline:
         source_path_override: Optional[str] = None,
         retry_failed_only: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        run_logger: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """
         Run a single ingestion pass.
@@ -265,6 +292,13 @@ class IngestionPipeline:
             f"Starting ingestion run (corpus={corpus_id or 'all'}, "
             f"source_override={source_path_override}, retry_failed_only={retry_failed_only})..."
         )
+        if run_logger:
+            run_logger(
+                "RUN START "
+                f"corpus={corpus_id or 'all'} "
+                f"source_override={source_path_override or '-'} "
+                f"retry_failed_only={retry_failed_only}"
+            )
 
         corpora = self._get_corpora(corpus_id)
         summary = {
@@ -284,13 +318,28 @@ class IngestionPipeline:
             scan_path = source_path_override or corpus.get('source_path') or corpus.get('inbox_path')
 
             logger.info(f"Scanning corpus: {cid} at {scan_path}")
+            if run_logger:
+                embed_settings = self._get_embedding_settings(corpus["config"])
+                chunk_defaults = corpus["config"].get("chunking", {}).get("default", {})
+                run_logger(
+                    "CORPUS "
+                    f"id={cid} scan_path={scan_path} "
+                    f"embedding={embed_settings['provider']}/{embed_settings['model']} "
+                    f"chunking={chunk_defaults.get('strategy', 'pdf_sections')}/"
+                    f"{chunk_defaults.get('max_tokens', 700)}/"
+                    f"{chunk_defaults.get('overlap_tokens', 80)}"
+                )
 
             if not os.path.exists(scan_path):
                 logger.warning(f"Path does not exist: {scan_path}")
+                if run_logger:
+                    run_logger(f"CORPUS SKIP id={cid} reason=missing_scan_path")
                 continue
 
             files = self._get_failed_files(cid) if retry_failed_only else self._scan_files(scan_path)
             logger.info(f"Found {len(files)} candidates.")
+            if run_logger:
+                run_logger(f"CORPUS QUEUED id={cid} files={len(files)}")
             summary["total_files"] += len(files)
             queued_corpora.append({
                 "id": cid,
@@ -341,7 +390,7 @@ class IngestionPipeline:
                     "current_file": file_path,
                     "message": f"Processing {summary['files_completed'] + 1} of {summary['total_files']}",
                 })
-                result = self._process_file(file_path, cid, corpus_config, embedder)
+                result = self._process_file(file_path, cid, corpus_config, embedder, run_logger)
                 summary["files_completed"] += 1
                 if result == "processed":
                     summary["files_processed"] += 1
@@ -370,6 +419,15 @@ class IngestionPipeline:
             summary["corpora_processed"] += 1
 
         logger.info(f"Ingestion run complete. Summary: {summary}")
+        if run_logger:
+            run_logger(
+                "RUN COMPLETE "
+                f"corpora_processed={summary['corpora_processed']} "
+                f"total_files={summary['total_files']} "
+                f"files_processed={summary['files_processed']} "
+                f"files_skipped={summary['files_skipped']} "
+                f"files_failed={summary['files_failed']}"
+            )
         return summary
 
     def _process_file(
@@ -378,6 +436,7 @@ class IngestionPipeline:
         corpus_id: str,
         corpus_config: Dict[str, Any],
         embedder,
+        run_logger: Optional[Callable[[str], None]] = None,
     ) -> str:
         """
         Process a single file through the ingestion pipeline.
@@ -390,6 +449,8 @@ class IngestionPipeline:
             Status string: "processed", "skipped", or "failed"
         """
         try:
+            if run_logger:
+                run_logger(f"FILE START corpus={corpus_id} path={file_path}")
             # Hash file for deduplication
             current_hash = hash_file(file_path)
 
@@ -405,6 +466,8 @@ class IngestionPipeline:
                 db_hash, status = row[0], row[1]
                 if db_hash == current_hash and status == 'SUCCESS':
                     logger.debug(f"Skipping unchanged file: {file_path}")
+                    if run_logger:
+                        run_logger(f"FILE SKIPPED corpus={corpus_id} path={file_path} reason=unchanged")
                     return "skipped"
                 logger.info(f"File changed or failed previously: {file_path}")
 
@@ -463,6 +526,8 @@ class IngestionPipeline:
             if not chunks:
                 logger.warning(f"No text extracted for {file_path}")
                 self._record_failure(file_path, corpus_id, current_hash, "No text extracted")
+                if run_logger:
+                    run_logger(f"FILE FAILED corpus={corpus_id} path={file_path} reason=No text extracted")
                 return "failed"
 
             # Embed chunks
@@ -473,6 +538,8 @@ class IngestionPipeline:
 
             if not embeddings:
                 logger.warning(f"No embeddings generated for {file_path}")
+                if run_logger:
+                    run_logger(f"FILE FAILED corpus={corpus_id} path={file_path} reason=No embeddings generated")
                 return "failed"
 
             actual_dim = len(embeddings[0])
@@ -517,6 +584,11 @@ class IngestionPipeline:
             # Record success
             self._record_success(file_path, corpus_id, current_hash)
             logger.info(f"Successfully ingested {file_path}")
+            if run_logger:
+                run_logger(
+                    f"FILE SUCCESS corpus={corpus_id} path={file_path} "
+                    f"chunks={len(chunks)} vectors={len(vectors_payload)}"
+                )
             return "processed"
 
         except Exception as e:
@@ -526,6 +598,8 @@ class IngestionPipeline:
             except Exception as record_err:
                 # Log the error when recording failure, but don't fail the overall process
                 logger.warning(f"Failed to record failure for {file_path}: {record_err}")
+            if run_logger:
+                run_logger(f"FILE FAILED corpus={corpus_id} path={file_path} reason={e}")
             return "failed"
 
     def _record_success(self, file_path: str, corpus_id: str, file_hash: str) -> None:

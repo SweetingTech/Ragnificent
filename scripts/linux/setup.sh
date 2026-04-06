@@ -52,4 +52,12 @@ if [ -f "pyproject.toml" ]; then
     pip install .
 fi
 
+if command -v ollama >/dev/null 2>&1; then
+    echo "Pulling required Ollama models..."
+    python scripts/pull_ollama_models.py --mode required || \
+        echo "Warning: model pull did not complete cleanly. Retry with: python scripts/pull_ollama_models.py --mode required"
+else
+    echo "Ollama not found on PATH. Skipping model pull."
+fi
+
 echo "Setup complete."

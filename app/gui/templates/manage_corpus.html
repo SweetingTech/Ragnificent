@@ -17,7 +17,7 @@
         <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}&retry_failed_only=true"
                 hx-swap="none"
                 class="btn">
-            Retry Failed{% if corpus.failed_files %} ({{ corpus.failed_files }}){% endif %}
+            <span id="retry-failed-label">Retry Failed{% if corpus.failed_files %} ({{ corpus.failed_files }}){% endif %}</span>
         </button>
         <form method="POST" action="/gui/corpora/{{ corpus.corpus_id }}/delete"
               onsubmit="return confirm('Permanently delete librarian \'{{ corpus.corpus_id }}\' and all its vectors? This cannot be undone.');">
@@ -78,10 +78,10 @@
             </dd>
 
             <dt>Failed Files</dt>
-            <dd>{{ corpus.failed_files }}</dd>
+            <dd id="corpus-failed-files">{{ corpus.failed_files }}</dd>
 
             <dt>Vector Count</dt>
-            <dd>{{ vector_count }}</dd>
+            <dd id="corpus-vector-count">{{ vector_count }}</dd>
         </dl>
     </div>
 
@@ -119,6 +119,9 @@
 <script>
 const ingestPanel = document.getElementById("ingest-status-panel");
 const ingestCorpusId = ingestPanel.dataset.corpusId;
+const vectorCountNode = document.getElementById("corpus-vector-count");
+const failedFilesNode = document.getElementById("corpus-failed-files");
+const retryFailedLabel = document.getElementById("retry-failed-label");
 
 function renderCorpusIngestStatus(data) {
     const label = document.getElementById("ingest-status-label");
@@ -185,7 +188,25 @@ async function pollCorpusIngestStatus() {
     } catch (_) {}
 }
 
+function renderCorpusLiveStats(data) {
+    vectorCountNode.textContent = String(data.vector_count ?? 0);
+    failedFilesNode.textContent = String(data.failed_files ?? 0);
+    const failed = Number(data.failed_files ?? 0);
+    retryFailedLabel.textContent = failed > 0 ? `Retry Failed (${failed})` : "Retry Failed";
+}
+
+async function pollCorpusLiveStats() {
+    try {
+        const resp = await fetch(`/api/corpora/${encodeURIComponent(ingestCorpusId)}/stats`, { cache: "no-store" });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderCorpusLiveStats(data);
+    } catch (_) {}
+}
+
 pollCorpusIngestStatus();
+pollCorpusLiveStats();
 setInterval(pollCorpusIngestStatus, 2000);
+setInterval(pollCorpusLiveStats, 2000);
 </script>
 {% endblock %}

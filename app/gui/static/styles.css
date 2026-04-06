@@ -72,6 +72,50 @@ h1, h2, h3 {
     gap: 1.5rem;
 }
 
+.dashboard-corpora-grid {
+    align-items: stretch;
+}
+
+.dashboard-corpus-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+
+.dashboard-corpus-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+}
+
+.dashboard-corpus-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dashboard-corpus-description {
+    color: var(--text-secondary);
+    min-height: 3rem;
+    margin: 0.75rem 0 0;
+}
+
+.dashboard-corpus-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.dashboard-corpus-paths {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.dashboard-add-corpus-card {
+    min-height: 100%;
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;

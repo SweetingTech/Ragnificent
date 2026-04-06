@@ -25,26 +25,27 @@
 </div>
 
 <h2>Active Corpora</h2>
-<div class="grid" style="margin-top: 1rem;">
+<div class="grid dashboard-corpora-grid" style="margin-top: 1rem;">
     {% for corpus in corpora %}
-    <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:start;">
-            <h3>{{ corpus.corpus_id }}</h3>
-            <div style="display:flex; gap: 0.5rem;">
-                <!-- Trigger Ingest -->
-                <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}" 
+    <div class="card dashboard-corpus-card">
+        <div class="dashboard-corpus-header">
+            <h3 class="dashboard-corpus-title">{{ corpus.corpus_id }}</h3>
+        </div>
+
+        <p class="dashboard-corpus-description">{{ corpus.description }}</p>
+
+        <div class="dashboard-corpus-actions">
+            <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}" 
                         hx-swap="none"
                         class="btn" 
                         style="font-size: 0.8rem; background: rgba(59, 130, 246, 0.2); color: #60a5fa;"
                         onclick="alert('Sync started for ' + '{{ corpus.corpus_id }}');">
-                    Sync Files
-                </button>
-                <a href="/gui/corpora/{{ corpus.corpus_id }}" class="btn btn-primary" style="font-size: 0.8rem;">Manage</a>
-            </div>
+                Sync Files
+            </button>
+            <a href="/gui/corpora/{{ corpus.corpus_id }}" class="btn btn-primary" style="font-size: 0.8rem;">Manage</a>
         </div>
-        <p style="color: var(--text-secondary); height: 3rem;">{{ corpus.description }}</p>
         
-        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <div class="dashboard-corpus-paths">
             <small style="color: var(--text-secondary);">Source Path:</small><br>
             <code style="font-size: 0.8rem; word-break: break-all;">{{ corpus.source_path or "Not set" }}</code>
             <div style="margin-top: 0.75rem;">
@@ -56,7 +57,7 @@
     {% endfor %}
     
     <!-- Add New Corpus Card -->
-    <div class="card" style="border-style: dashed; display: flex; align-items: center; justify-content: center; cursor: pointer;" 
+    <div class="card dashboard-add-corpus-card" style="border-style: dashed; display: flex; align-items: center; justify-content: center; cursor: pointer;" 
          onclick="window.location.href='/gui/corpora/new'">
         <div style="text-align: center;">
             <span style="font-size: 2rem; color: var(--text-secondary);">+</span>

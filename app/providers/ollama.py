@@ -26,6 +26,19 @@ class OllamaProvider(EmbeddingProvider):
         # Use explicit Client instead of global env var
         self._client = Client(host=base_url)
 
+    def _normalize_embeddings_response(self, resp) -> List[List[float]]:
+        """Handle both current and legacy Ollama client response shapes."""
+        if hasattr(resp, "embeddings"):
+            return resp.embeddings
+        if hasattr(resp, "embedding"):
+            return [resp.embedding]
+        if isinstance(resp, dict):
+            if "embeddings" in resp:
+                return resp["embeddings"]
+            if "embedding" in resp:
+                return [resp["embedding"]]
+        raise RuntimeError("Unexpected Ollama embeddings response format.")
+
     def embed(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for a list of texts.
@@ -43,9 +56,18 @@ class OllamaProvider(EmbeddingProvider):
         clean_texts = [text.replace("\n", " ") for text in texts]
 
         try:
-            # Ollama's embed endpoint accepts an array of strings
-            resp = self._client.embed(model=self.model, input=clean_texts)
-            return resp.embeddings
+            if hasattr(self._client, "embed"):
+                resp = self._client.embed(model=self.model, input=clean_texts)
+                return self._normalize_embeddings_response(resp)
+
+            if hasattr(self._client, "embeddings"):
+                batched: List[List[float]] = []
+                for text in clean_texts:
+                    resp = self._client.embeddings(model=self.model, prompt=text)
+                    batched.extend(self._normalize_embeddings_response(resp))
+                return batched
+
+            raise RuntimeError("Ollama client does not expose embed or embeddings APIs.")
         except Exception as e:
             logger.error(f"Batch embedding failed: {e}")
             raise

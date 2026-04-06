@@ -21,7 +21,8 @@ class PdfSectionChunker:
     def __init__(
         self,
         max_tokens: int = DEFAULT_MAX_TOKENS,
-        overlap_tokens: int = DEFAULT_OVERLAP_TOKENS
+        overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
+        max_chars: Optional[int] = None,
     ):
         """
         Initialize the chunker.
@@ -32,6 +33,7 @@ class PdfSectionChunker:
         """
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
+        self.max_chars = max_chars
 
     def _estimate_tokens(self, text: str) -> float:
         """
@@ -45,6 +47,124 @@ class PdfSectionChunker:
         """
         word_count = len(text.split())
         return word_count * WORDS_TO_TOKENS_RATIO
+
+    def _max_words_per_chunk(self) -> int:
+        return max(1, int(self.max_tokens / WORDS_TO_TOKENS_RATIO))
+
+    def _overlap_words(self) -> int:
+        if self.overlap_tokens <= 0:
+            return 0
+        return max(0, int(self.overlap_tokens / WORDS_TO_TOKENS_RATIO))
+
+    def _split_large_block(self, text: str) -> List[str]:
+        """
+        Force-split a large block when paragraph boundaries are insufficient.
+
+        This is the safety valve for PDFs that extract as one giant paragraph or
+        otherwise exceed the embedding model's input window.
+        """
+        words = text.split()
+        if not words:
+            return []
+
+        max_words = self._max_words_per_chunk()
+        overlap_words = min(self._overlap_words(), max_words - 1) if max_words > 1 else 0
+        chunks: List[str] = []
+        current: List[str] = []
+
+        for word in words:
+            candidate_words = current + [word]
+            candidate = " ".join(candidate_words)
+            too_many_words = len(candidate_words) > max_words
+            too_many_chars = self.max_chars is not None and len(candidate) > self.max_chars
+
+            if current and (too_many_words or too_many_chars):
+                chunks.append(" ".join(current))
+                if overlap_words > 0:
+                    current = current[-overlap_words:]
+                    overlap_candidate = " ".join(current + [word])
+                    if self.max_chars is not None and len(overlap_candidate) > self.max_chars:
+                        current = []
+                else:
+                    current = []
+
+            current.append(word)
+
+        if current:
+            chunks.append(" ".join(current))
+
+        return chunks
+
+    def _append_chunk(
+        self,
+        chunks: List[Dict[str, Any]],
+        chunk_paragraphs: List[str],
+        token_count: float,
+        metadata: Optional[Dict[str, Any]],
+        chunk_index: int,
+    ) -> None:
+        chunk_text = "\n\n".join(chunk_paragraphs)
+        chunk_metadata = dict(metadata) if metadata else {}
+        chunk_metadata["chunk_index"] = chunk_index
+        chunks.append({
+            "content": chunk_text,
+            "token_count": int(token_count),
+            "metadata": chunk_metadata,
+        })
+
+    def _enforce_max_chunk_size(
+        self,
+        chunks: List[Dict[str, Any]],
+        metadata: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Final safety pass so no chunk leaves this chunker above max_tokens.
+        """
+        bounded: List[Dict[str, Any]] = []
+        next_index = 0
+
+        for chunk in chunks:
+            content = chunk.get("content", "")
+            token_count = self._estimate_tokens(content)
+            within_token_limit = token_count <= self.max_tokens
+            within_char_limit = self.max_chars is None or len(content) <= self.max_chars
+            if within_token_limit and within_char_limit:
+                chunk_metadata = dict(metadata) if metadata else {}
+                chunk_metadata.update(
+                    {
+                        k: v
+                        for k, v in chunk.get("metadata", {}).items()
+                        if k != "chunk_index"
+                    }
+                )
+                chunk_metadata["chunk_index"] = next_index
+                bounded.append({
+                    "content": content,
+                    "token_count": int(token_count),
+                    "metadata": chunk_metadata,
+                })
+                next_index += 1
+                continue
+
+            inherited_metadata = {
+                k: v
+                for k, v in chunk.get("metadata", {}).items()
+                if k != "chunk_index"
+            }
+            merged_metadata = dict(metadata) if metadata else {}
+            merged_metadata.update(inherited_metadata)
+            for split_block in self._split_large_block(content):
+                split_tokens = self._estimate_tokens(split_block)
+                self._append_chunk(
+                    bounded,
+                    [split_block],
+                    split_tokens,
+                    merged_metadata,
+                    next_index,
+                )
+                next_index += 1
+
+        return bounded
 
     def _calculate_overlap_paragraphs(
         self,
@@ -106,18 +226,22 @@ class PdfSectionChunker:
         for para in paragraphs:
             para_tokens = self._estimate_tokens(para)
 
+            if para_tokens > self.max_tokens:
+                if current_chunk:
+                    self._append_chunk(chunks, current_chunk, current_tokens, metadata, chunk_index)
+                    chunk_index += 1
+                    current_chunk = []
+                    current_tokens = 0.0
+
+                for split_block in self._split_large_block(para):
+                    split_tokens = self._estimate_tokens(split_block)
+                    self._append_chunk(chunks, [split_block], split_tokens, metadata, chunk_index)
+                    chunk_index += 1
+                continue
+
             # Check if adding this paragraph would exceed the limit
             if current_tokens + para_tokens > self.max_tokens and current_chunk:
-                # Flush the current chunk
-                chunk_text = "\n\n".join(current_chunk)
-                chunk_metadata = dict(metadata) if metadata else {}
-                chunk_metadata['chunk_index'] = chunk_index
-
-                chunks.append({
-                    "content": chunk_text,
-                    "token_count": int(current_tokens),
-                    "metadata": chunk_metadata
-                })
+                self._append_chunk(chunks, current_chunk, current_tokens, metadata, chunk_index)
                 chunk_index += 1
 
                 # Calculate overlap - keep some paragraphs from the end
@@ -135,14 +259,6 @@ class PdfSectionChunker:
 
         # Don't forget the last chunk
         if current_chunk:
-            chunk_text = "\n\n".join(current_chunk)
-            chunk_metadata = dict(metadata) if metadata else {}
-            chunk_metadata['chunk_index'] = chunk_index
+            self._append_chunk(chunks, current_chunk, current_tokens, metadata, chunk_index)
 
-            chunks.append({
-                "content": chunk_text,
-                "token_count": int(current_tokens),
-                "metadata": chunk_metadata
-            })
-
-        return chunks
+        return self._enforce_max_chunk_size(chunks, metadata)

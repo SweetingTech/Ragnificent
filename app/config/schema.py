@@ -24,9 +24,16 @@ class OcrMypdfConfig(BaseModel):
     cache_dir: str
 
 
+class OcrOllamaConfig(BaseModel):
+    base_url: str = "http://localhost:11434"
+    model: str = "hf.co/ggml-org/GLM-OCR-GGUF:Q8_0"
+    prompt: str = "Text Recognition:"
+
+
 class OcrConfig(BaseModel):
     backend: str
     ocrmypdf: OcrMypdfConfig
+    ollama: Optional[OcrOllamaConfig] = None
 
 
 class EmbeddingsConfig(BaseModel):

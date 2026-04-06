@@ -47,7 +47,13 @@ def _default_url(provider: str) -> str:
 def _test_ollama_embed(base_url: str, model: str):
     try:
         from ollama import Client
-        Client(host=base_url).embed(model=model, input=["ping"])
+        client = Client(host=base_url)
+        if hasattr(client, "embed"):
+            client.embed(model=model, input=["ping"])
+        elif hasattr(client, "embeddings"):
+            client.embeddings(model=model, prompt="ping")
+        else:
+            raise RuntimeError("Ollama client does not expose embed or embeddings APIs.")
         return True, f"Connected to Ollama at {base_url}. Model '{model}' responded."
     except Exception as e:
         return False, str(e)

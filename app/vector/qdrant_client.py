@@ -3,18 +3,21 @@ Qdrant vector database service for storing and searching document embeddings.
 """
 
 from collections import deque
+import json
 import time
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
-from typing import List, Dict, Optional, Tuple
+from typing import Iterable, List, Dict, Optional, Tuple
 from ..utils.logging import setup_logging
 
 logger = setup_logging()
 
 # Constants
 DEFAULT_VECTOR_SIZE = 768
+DEFAULT_UPSERT_BATCH_BYTES = 8 * 1024 * 1024
+DEFAULT_UPSERT_BATCH_POINTS = 128
 
 
 def get_connection_error(error: BaseException) -> Optional[BaseException]:
@@ -63,6 +66,37 @@ class VectorService:
         self._collection_cache: Dict[str, bool] = {}
         self._count_cache: Dict[str, Tuple[int, float]] = {}
         self._count_ttl: float = 30.0  # seconds
+
+    def _estimate_chunk_size_bytes(self, chunk: Dict) -> int:
+        """Estimate serialized request size for a chunk."""
+        vector = chunk.get("vector", [])
+        payload = chunk.get("payload", {})
+        vector_bytes = len(vector) * 4
+        payload_bytes = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        id_bytes = len(str(chunk.get("id", "")).encode("utf-8"))
+        return vector_bytes + payload_bytes + id_bytes + 512
+
+    def _iter_upsert_batches(self, chunks: List[Dict]) -> Iterable[List[Dict]]:
+        """Split large upserts into smaller request-sized batches."""
+        batch: List[Dict] = []
+        batch_bytes = 0
+
+        for chunk in chunks:
+            chunk_bytes = self._estimate_chunk_size_bytes(chunk)
+            should_flush = batch and (
+                len(batch) >= DEFAULT_UPSERT_BATCH_POINTS
+                or batch_bytes + chunk_bytes > DEFAULT_UPSERT_BATCH_BYTES
+            )
+            if should_flush:
+                yield batch
+                batch = []
+                batch_bytes = 0
+
+            batch.append(chunk)
+            batch_bytes += chunk_bytes
+
+        if batch:
+            yield batch
 
     def _get_collection_name(self, corpus_id: str) -> str:
         """
@@ -205,14 +239,22 @@ class VectorService:
         # Ensure collection exists before upserting
         self.ensure_collection(corpus_id, vector_size, on_disk, hnsw_on_disk)
 
-        points = [
-            models.PointStruct(id=c["id"], vector=c["vector"], payload=c["payload"])
-            for c in chunks
-        ]
-
         try:
-            self.client.upsert(collection_name=collection_name, points=points)
-            logger.info(f"Upserted {len(points)} chunks to {collection_name}")
+            total_points = 0
+            batches = list(self._iter_upsert_batches(chunks))
+            for index, batch in enumerate(batches, start=1):
+                points = [
+                    models.PointStruct(
+                        id=chunk["id"], vector=chunk["vector"], payload=chunk["payload"]
+                    )
+                    for chunk in batch
+                ]
+                self.client.upsert(collection_name=collection_name, points=points)
+                total_points += len(points)
+                logger.info(
+                    f"Upserted batch {index}/{len(batches)} with {len(points)} chunks to {collection_name}"
+                )
+            logger.info(f"Upserted {total_points} chunks to {collection_name}")
             self._count_cache.pop(corpus_id, None)  # invalidate cached count
         except Exception as e:
             logger.error(f"Failed to upsert chunks to {collection_name}: {e}")
@@ -296,23 +338,25 @@ class VectorService:
             logger.error(f"Search failed for {collection_name}: {e}")
             return []
 
-    def get_count(self, corpus_id: str) -> int:
+    def get_count(self, corpus_id: str, fresh: bool = False) -> int:
         """
         Get the number of vectors in a collection.
         Results are cached for _count_ttl seconds to avoid hammering Qdrant on every page load.
 
         Args:
             corpus_id: The corpus identifier
+            fresh: If True, bypass the cached count and fetch directly from Qdrant
 
         Returns:
             Number of vectors, or 0 if collection doesn't exist
         """
         now = time.monotonic()
-        cached = self._count_cache.get(corpus_id)
-        if cached is not None:
-            count, ts = cached
-            if now - ts < self._count_ttl:
-                return count
+        if not fresh:
+            cached = self._count_cache.get(corpus_id)
+            if cached is not None:
+                count, ts = cached
+                if now - ts < self._count_ttl:
+                    return count
 
         collection_name = self._get_collection_name(corpus_id)
         if not self.collection_exists(corpus_id):
