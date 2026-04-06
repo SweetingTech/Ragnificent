@@ -12,19 +12,20 @@ SUPPORTED_EMBEDDING_PROVIDERS = ["ollama", "openai", "openrouter"]
 SUPPORTED_LLM_PROVIDERS = ["ollama", "openai", "anthropic", "openrouter"]
 
 # Default base URLs per provider
-_PROVIDER_DEFAULTS = {
+PROVIDER_DEFAULT_BASE_URLS = {
     "ollama":      "http://localhost:11434",
     "openai":      OPENAI_BASE_URL,
     "openrouter":  OPENROUTER_BASE_URL,
     "anthropic":   ANTHROPIC_BASE_URL,
 }
+_PROVIDER_DEFAULTS = PROVIDER_DEFAULT_BASE_URLS
 
 
 def _resolve_url(provider: str, base_url: Optional[str]) -> str:
     """Return base_url if set, otherwise use the provider's default."""
     if base_url:
         return base_url
-    return _PROVIDER_DEFAULTS.get(provider, "")
+    return PROVIDER_DEFAULT_BASE_URLS.get(provider, "")
 
 
 def get_embedding_provider(

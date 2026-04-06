@@ -2,14 +2,18 @@
 Query engine for RAG-based search and answer generation.
 Handles vector search, context assembly, and LLM answer generation.
 """
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 from pathlib import Path
 import yaml
 import time
 
 from ..vector.qdrant_client import VectorService
 from ..providers.base import EmbeddingProvider, LLMProvider
-from ..providers.factory import get_embedding_provider, get_llm_provider
+from ..providers.factory import (
+    PROVIDER_DEFAULT_BASE_URLS,
+    get_embedding_provider,
+    get_llm_provider,
+)
 from ..providers.reranker import RerankProvider
 from ..services.corpus_service import validate_corpus_id, CorpusValidationError
 from ..utils.logging import setup_logging
@@ -19,13 +23,7 @@ from ..config.schema import GlobalConfig
 logger = setup_logging()
 
 # Default base URL for LLM providers (loaded from config when possible)
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_PROVIDER_BASE_URLS = {
-    "ollama": DEFAULT_OLLAMA_URL,
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-}
+DEFAULT_OLLAMA_URL = PROVIDER_DEFAULT_BASE_URLS["ollama"]
 
 
 class QueryEngine:
@@ -92,6 +90,9 @@ class QueryEngine:
             self.default_answer_base_url = self.base_url or DEFAULT_OLLAMA_URL
             self.default_answer_api_key = None
 
+        self._corpus_meta_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self._embedder_cache: Dict[Tuple[str, str, str, Optional[str]], EmbeddingProvider] = {}
+
     def _get_corpus_config_path(self, corpus_id: str) -> Optional[Path]:
         """
         Get the path to corpus config file.
@@ -140,8 +141,16 @@ class QueryEngine:
                 if answer_config:
                     provider = answer_config.get("provider", "ollama")
                     model = answer_config.get("model", "llama3")
-                    base_url = answer_config.get("base_url") or self.base_url
-                    api_key = answer_config.get("api_key")
+                    base_url = (
+                        answer_config.get("base_url")
+                        or DEFAULT_PROVIDER_BASE_URLS.get(provider, self.default_answer_base_url)
+                    )
+                    if "api_key" in answer_config:
+                        api_key = answer_config.get("api_key")
+                    elif provider == self.default_answer_provider:
+                        api_key = self.default_answer_api_key
+                    else:
+                        api_key = None
                     return get_llm_provider(provider, base_url=base_url, model=model, api_key=api_key)
             except Exception as e:
                 logger.warning(f"Failed to load corpus LLM config for {corpus_id}: {e}")
@@ -153,8 +162,15 @@ class QueryEngine:
         if not config_path:
             return {}
         try:
-            with open(config_path) as f:
-                return yaml.safe_load(f) or {}
+            mtime = config_path.stat().st_mtime
+            cached = self._corpus_meta_cache.get(corpus_id)
+            if cached and cached[0] == mtime:
+                return cached[1]
+
+            with open(config_path, encoding="utf-8") as f:
+                meta = yaml.safe_load(f) or {}
+            self._corpus_meta_cache[corpus_id] = (mtime, meta)
+            return meta
         except Exception as e:
             logger.warning(f"Failed to load corpus config for {corpus_id}: {e}")
             return {}
@@ -177,13 +193,34 @@ class QueryEngine:
             embedding_config.get("base_url")
             or DEFAULT_PROVIDER_BASE_URLS.get(provider, default_base_url)
         )
-        api_key = embedding_config.get("api_key", default_api_key)
-        return get_embedding_provider(
+        if "api_key" in embedding_config:
+            api_key = embedding_config.get("api_key")
+        elif provider == default_provider:
+            api_key = default_api_key
+        else:
+            api_key = None
+
+        if (
+            provider == default_provider
+            and model == default_model
+            and base_url == default_base_url
+            and api_key == default_api_key
+        ):
+            return self.embedder
+
+        cache_key = (provider, base_url, model, api_key)
+        cached = self._embedder_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        embedder = get_embedding_provider(
             provider,
             base_url=base_url,
             model=model,
             api_key=api_key,
         )
+        self._embedder_cache[cache_key] = embedder
+        return embedder
 
     def query(
         self,

@@ -18,6 +18,7 @@ from ..config.embedding_presets import load_embedding_presets
 from ..state.db import Database
 from ..state.stats import StatsService
 from ..vector.qdrant_client import VectorService
+from ..providers.factory import PROVIDER_DEFAULT_BASE_URLS
 from ..services.corpus_service import (
     CorpusService,
     validate_corpus_id,
@@ -39,12 +40,6 @@ templates = Jinja2Templates(directory=str(templates_dir))
 router = APIRouter(prefix="/gui", tags=["gui"])
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
-PROVIDER_DEFAULT_BASE_URLS = {
-    "ollama": "http://localhost:11434",
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-}
 
 # ---------------------------------------------------------------------------
 # Cached singletons — created once per process, reused across requests.

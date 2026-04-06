@@ -70,6 +70,14 @@ def _set_ingest_state(**updates: Any) -> None:
         _INGEST_STATE.update(updates)
 
 
+def _try_begin_ingest(**updates: Any) -> Optional[Dict[str, Any]]:
+    with _INGEST_STATE_LOCK:
+        if _INGEST_STATE.get("status") == "running":
+            return dict(_INGEST_STATE)
+        _INGEST_STATE.update(updates)
+        return None
+
+
 def _get_ingest_state() -> Dict[str, Any]:
     with _INGEST_STATE_LOCK:
         return dict(_INGEST_STATE)
@@ -152,7 +160,7 @@ async def run_ingest(
         if retry_failed_only:
             desc = f"failed files for {desc}"
 
-        _set_ingest_state(
+        running_state = _try_begin_ingest(
             job_id=job_id,
             status="running",
             message=f"Starting ingestion for {desc}",
@@ -171,6 +179,15 @@ async def run_ingest(
             summary=None,
             log_file=str(log_path),
         )
+        if running_state is not None:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "running",
+                    "message": "An ingestion job is already running",
+                    "active_job": running_state,
+                },
+            )
         run_logger(
             f"JOB id={job_id} description={desc} qdrant_url={pipeline.config.vector_db.url}"
         )
@@ -219,7 +236,7 @@ async def run_ingest(
                 message=message,
                 finished_at=time.time(),
             )
-            log_path = _INGEST_STATE.get("log_file")
+            log_path = _get_ingest_state().get("log_file")
             if log_path:
                 with Path(log_path).open("a", encoding="utf-8") as handle:
                     handle.write(f"{datetime.now().isoformat(timespec='seconds')} RUN ERROR reason={message}\n")
@@ -239,7 +256,7 @@ async def run_ingest(
             message=f"Ingestion failed: {e}",
             finished_at=time.time(),
         )
-        log_path = _INGEST_STATE.get("log_file")
+        log_path = _get_ingest_state().get("log_file")
         if log_path:
             with Path(log_path).open("a", encoding="utf-8") as handle:
                 handle.write(f"{datetime.now().isoformat(timespec='seconds')} RUN ERROR reason={e}\n")

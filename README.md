@@ -79,6 +79,7 @@ graph TD
 - SHA-256 hash deduplication — skips already-processed files, handles incremental updates
 - Lane-based extraction routing: PyMuPDF for native PDFs, OCRmyPDF for scanned PDFs, Tesseract/PaddleOCR for images, dedicated EPUB extractor, text/code loader
 - OCR fallback per-page when text density falls below a configurable threshold
+- Optional Ollama OCR lane for troublesome PDFs/images — configure a vision OCR model such as `hf.co/ggml-org/GLM-OCR-GGUF:Q8_0`; if the Ollama OCR call fails, image OCR falls back to Tesseract
 - Three chunking strategies: Markdown header-aware, PDF paragraph-based with overlap, Python function/class symbol-aware
 - OpenAI-compatible embedding requests are batched with retry/backoff so large PDFs and textbook-scale corpora are less likely to fail on remote embedding providers
 - Live ingest progress from `/api/ingest/status` and the GUI overlay: total files, completed count, current file, processed/skipped/failed counts, percent complete
@@ -164,7 +165,7 @@ copy .env.example .env
 .\scripts\windows\run.ps1
 ```
 
-`run.ps1` starts the full-restart watcher and, when `config.yaml` points Qdrant at `http://localhost:6333`, also tries to bring up the local `qdrant` container automatically.
+`setup.ps1` installs dependencies and, when `ollama` is available, pulls the required local models for the current configuration. `run.ps1` starts the full-restart watcher and, when `config.yaml` points Qdrant at `http://localhost:6333`, also tries to bring up the local `qdrant` container automatically.
 
 ### Option 3 — Bare Python (Linux/macOS)
 
@@ -175,7 +176,16 @@ cp .env.example .env
 ./scripts/linux/run.sh
 ```
 
-`run.sh` follows the same local-Qdrant auto-start behavior when `vector_db.url` is `localhost:6333`.
+`setup.sh` installs dependencies and, when `ollama` is available, pulls the required local models for the current configuration. `run.sh` follows the same local-Qdrant auto-start behavior when `vector_db.url` is `localhost:6333`.
+
+### Pulling Ollama models manually
+
+```bash
+python scripts/pull_ollama_models.py --mode required
+python scripts/pull_ollama_models.py --mode catalog
+```
+
+`required` pulls the minimum local working set plus any Ollama OCR model configured in `config.yaml`. `catalog` pulls every Ollama model listed in `models_catalog.yaml`, plus the configured Ollama OCR model when applicable.
 
 ### Stopping the server (Windows)
 
@@ -286,7 +296,7 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/ingest/run` | Trigger ingestion (`?corpus_id=<id>` or all) |
+| `POST` | `/api/ingest/run` | Trigger ingestion (`?corpus_id=<id>` or all). Returns `409` if another ingest job is already running |
 | `POST` | `/api/ingest/run?retry_failed_only=true` | Retry only failed files for a corpus |
 | `GET` | `/api/ingest/status` | Current ingestion status, counts, current file, and progress percentage |
 
@@ -323,6 +333,20 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 ### `config.yaml` — provider and model settings
 
 Managed by the Settings UI. Controls default embedding provider/model and default LLM provider/model for new corpora plus connection testing. Per-corpus overrides live in `rag_library/corpora/<id>/corpus.yaml`.
+
+### `config.yaml` — OCR settings
+
+The `ocr` section controls scanned-PDF/image OCR. Supported backends include:
+
+- `ocrmypdf` for whole-document scanned PDF workflows
+- `paddleocr` when PaddleOCR is installed
+- `ollama_glm_ocr` / `glm_ocr` / `ollama` for a vision-capable Ollama OCR model such as `hf.co/ggml-org/GLM-OCR-GGUF:Q8_0`
+
+When the Ollama OCR backend is enabled, configure:
+
+- `ocr.ollama.base_url`
+- `ocr.ollama.model`
+- `ocr.ollama.prompt`
 
 ### `embedding_presets.yaml` — corpus creation presets
 
@@ -383,17 +407,18 @@ Current catalog/provider flow:
 - At least one of:
   - [Ollama](https://ollama.com/) for local/LAN inference (no API key required)
   - An Anthropic, OpenAI, or OpenRouter API key for cloud inference
-- Optional: Tesseract, Ghostscript, OCRmyPDF, PaddleOCR for OCR support
+- Optional OCR tooling: Tesseract, Ghostscript, OCRmyPDF, PaddleOCR
+- Optional Ollama vision OCR model for the Ollama OCR backend, for example `hf.co/ggml-org/GLM-OCR-GGUF:Q8_0`
 
 ---
 
 ## Testing
 
 ```bash
-pytest tests/
+python -m compileall app
 ```
 
-Tests run against in-memory SQLite and temporary directories — no running Qdrant or Ollama instance required.
+Current repo validation is primarily live ingest/query verification plus compile checks. If you maintain a local/private test suite, run it separately in your environment.
 
 ---
 

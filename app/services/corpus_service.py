@@ -2,12 +2,13 @@
 Corpus service for managing corpus operations with proper validation.
 Consolidates duplicate get_corpora() logic and adds security measures.
 """
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from pathlib import Path
 import yaml
 import re
 import os
 
+from ..providers.factory import PROVIDER_DEFAULT_BASE_URLS
 from ..utils.logging import setup_logging
 
 logger = setup_logging()
@@ -15,14 +16,6 @@ logger = setup_logging()
 # Constants for validation
 CORPUS_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 MAX_CORPUS_ID_LENGTH = 64
-PROVIDER_DEFAULT_BASE_URLS = {
-    "ollama": "http://localhost:11434",
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-}
-
-
 class CorpusValidationError(Exception):
     """Raised when corpus validation fails."""
     pass

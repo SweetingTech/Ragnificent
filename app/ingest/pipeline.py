@@ -16,7 +16,10 @@ from ..utils.hashing import hash_file
 from ..engines.pdf_engine import PdfEngine
 from ..engines.epub_extractor import EpubExtractor
 from ..engines.image_extractor import ImageExtractor
-from ..providers.factory import get_embedding_provider
+from ..providers.factory import (
+    PROVIDER_DEFAULT_BASE_URLS,
+    get_embedding_provider,
+)
 from ..services.corpus_service import CorpusService, validate_corpus_id, CorpusValidationError
 from .chunkers.pdf_sections import PdfSectionChunker
 from .chunkers.code_symbols import CodeSymbolChunker
@@ -29,12 +32,6 @@ SUPPORTED_EXTENSIONS = [
     '**/*.pres', '**/*.pdf', '**/*.md', '**/*.txt', '**/*.py',
     '**/*.epub', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.tiff'
 ]
-DEFAULT_PROVIDER_BASE_URLS = {
-    "ollama": "http://localhost:11434",
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-}
 CHUNK_STRATEGY_ALIASES = {
     "heading_then_paragraph": "markdown",
     "markdown": "markdown",
@@ -198,13 +195,19 @@ class IngestionPipeline:
 
     def _get_embedding_settings(self, corpus_config: Dict[str, Any]) -> Dict[str, Any]:
         embedding_config = corpus_config.get("models", {}).get("embeddings", {})
+        default_embeddings = self.config.models.embeddings
         provider = embedding_config.get("provider", self.config.models.embeddings.provider)
         model = embedding_config.get("model", self.config.models.embeddings.model)
         base_url = (
             embedding_config.get("base_url")
-            or DEFAULT_PROVIDER_BASE_URLS.get(provider, self.config.models.embeddings.base_url)
+            or PROVIDER_DEFAULT_BASE_URLS.get(provider, default_embeddings.base_url)
         )
-        api_key = embedding_config.get("api_key", self.config.models.embeddings.api_key)
+        if "api_key" in embedding_config:
+            api_key = embedding_config.get("api_key")
+        elif provider == default_embeddings.provider:
+            api_key = default_embeddings.api_key
+        else:
+            api_key = None
         return {
             "provider": provider,
             "model": model,
@@ -251,6 +254,8 @@ class IngestionPipeline:
             return MarkdownChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
         if file_ext == ".py":
             return CodeSymbolChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        if file_ext in {".md", ".epub"}:
+            return MarkdownChunker(max_tokens=max_tokens, overlap_tokens=overlap_tokens)
         return PdfSectionChunker(
             max_tokens=max_tokens,
             overlap_tokens=overlap_tokens,
