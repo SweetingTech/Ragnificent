@@ -71,6 +71,7 @@ rag_library/logs/ingest/*
 !rag_library/logs/ingest/.gitkeep
 
 # User Content (Inbox) - Keep the folder, ignore the content
+rag_library/corpora/
 rag_library/corpora/*/inbox/*
 !rag_library/corpora/*/inbox/.gitkeep
 
