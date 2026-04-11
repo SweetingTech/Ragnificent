@@ -84,6 +84,7 @@ graph TD
 - OpenAI-compatible embedding requests are batched with retry/backoff so large PDFs and textbook-scale corpora are less likely to fail on remote embedding providers
 - Live ingest progress from `/api/ingest/status` and the GUI overlay: total files, completed count, current file, processed/skipped/failed counts, percent complete
 - Retry failed files from the corpus management page without re-running a full corpus scan
+- Rebuild a corpus from the Manage page or API: clears that corpus's existing vectors + ingest state, then reprocesses all source files from scratch with the current pipeline
 
 ### Per-Corpus Isolation
 - Each corpus gets its own Qdrant collection — no cross-contamination between document sets
@@ -129,6 +130,7 @@ graph TD
 - Live feedback: spinner overlay during operations, toast notifications on completion
 - Corpus creation flow includes ingest-time embedding presets plus manual overrides for provider, model, base URL, and chunking
 - Corpus management page shows embedding preset, embedding model, chunking settings, failed-file count, sync progress, and a retry-failed action
+- Corpus management page also includes a `Rebuild` action for full corpus reprocessing without deleting the corpus definition itself
 - REST API: health, query, ingest trigger, connection test endpoints
 - CLI: `init-db`, `serve`, `ingest`, `ingest-file` commands
 
@@ -153,6 +155,24 @@ cp .env.example .env
 # Edit .env and add your API keys (optional — only needed for cloud providers)
 docker-compose up -d
 # Service: http://localhost:8008
+```
+
+When running RAGnificent inside the full Jazzy workspace, Agent Builder owns host port `8008`. Set the host-published RAGnificent port before starting Docker:
+
+```env
+RAGNIFICENT_HOST_PORT=8018
+```
+
+With that setting, RAGnificent still listens on `8008` inside the container, but the host URL becomes:
+
+```text
+http://localhost:8018
+```
+
+AgentsOfJazzy should then use:
+
+```env
+RAGNIFICENT_URL=http://localhost:8018
 ```
 
 ### Option 2 — Bare Python (Windows)
@@ -239,6 +259,9 @@ curl -X POST http://localhost:8008/api/corpora \
 # Trigger ingestion
 curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs"
 
+# Rebuild a corpus from scratch using the current OCR/chunking/embedding pipeline
+curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs&rebuild=true"
+
 # Retry only failed files for a corpus
 curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs&retry_failed_only=true"
 
@@ -257,6 +280,7 @@ curl -X POST http://localhost:8008/api/test-connection \
 
 ```bash
 python -m app.cli ingest --corpus <corpus_id>
+python -m app.cli ingest --corpus <corpus_id> --rebuild
 python -m app.cli ingest-file /path/to/file.pdf --corpus <corpus_id>
 ```
 
@@ -297,6 +321,7 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/ingest/run` | Trigger ingestion (`?corpus_id=<id>` or all). Returns `409` if another ingest job is already running |
+| `POST` | `/api/ingest/run?rebuild=true` | Rebuild one corpus from scratch: clears its existing vectors + ingest state, then reprocesses all source files |
 | `POST` | `/api/ingest/run?retry_failed_only=true` | Retry only failed files for a corpus |
 | `GET` | `/api/ingest/status` | Current ingestion status, counts, current file, and progress percentage |
 

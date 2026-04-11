@@ -63,9 +63,17 @@ def cmd_ingest(args):
     pipeline = IngestionPipeline(config, db, vector_service)
 
     corpus_id = getattr(args, 'corpus', None)
+    rebuild = getattr(args, 'rebuild', False)
     logger.info(f"Running ingestion for corpus: {corpus_id or 'all'}")
+    if rebuild and not corpus_id:
+        raise ValueError("--rebuild requires --corpus")
 
     try:
+        if rebuild:
+            vector_service.delete_collection(corpus_id)
+            with db.transaction() as conn:
+                conn.execute("DELETE FROM chunks WHERE corpus_id = ?", (corpus_id,))
+                conn.execute("DELETE FROM files WHERE corpus_id = ?", (corpus_id,))
         pipeline.run_once(corpus_id)
         logger.info("Ingestion completed successfully.")
     except Exception as e:
@@ -161,6 +169,11 @@ def main():
         type=str,
         default=None,
         help="Specific corpus ID to ingest (default: all)"
+    )
+    ingest_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Clear vectors and ingest state for the specified corpus, then reprocess all files from scratch"
     )
 
     # Ingest file command

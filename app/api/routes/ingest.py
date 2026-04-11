@@ -65,6 +65,31 @@ def _invalidate_vector_cache(pipeline: Any, corpus_id: Optional[str]) -> None:
         vector_service.invalidate_cache()
 
 
+def _reset_corpus_for_rebuild(
+    pipeline: IngestionPipeline,
+    corpus_id: str,
+    run_logger: Optional[Any] = None,
+) -> None:
+    """Clear persisted ingest/vector state for one corpus before reprocessing."""
+    logger.info(f"Rebuild requested for corpus {corpus_id}; clearing vectors and state")
+    if run_logger:
+        run_logger(f"REBUILD RESET START corpus={corpus_id}")
+
+    pipeline.vector_service.delete_collection(corpus_id)
+
+    try:
+        with pipeline.db.transaction() as conn:
+            conn.execute("DELETE FROM chunks WHERE corpus_id = ?", (corpus_id,))
+            conn.execute("DELETE FROM files WHERE corpus_id = ?", (corpus_id,))
+    except Exception as e:
+        logger.warning(f"Failed to clear SQLite records for rebuild of {corpus_id}: {e}")
+        raise
+
+    _invalidate_vector_cache(pipeline, corpus_id)
+    if run_logger:
+        run_logger(f"REBUILD RESET COMPLETE corpus={corpus_id}")
+
+
 def _set_ingest_state(**updates: Any) -> None:
     with _INGEST_STATE_LOCK:
         _INGEST_STATE.update(updates)
@@ -121,6 +146,7 @@ async def run_ingest(
     corpus_id: Optional[str] = None,
     source_path: Optional[str] = None,
     retry_failed_only: bool = False,
+    rebuild: bool = False,
     pipeline: IngestionPipeline = Depends(get_pipeline)
 ):
     """
@@ -141,6 +167,16 @@ async def run_ingest(
             status_code=400,
             detail="corpus_id is required when source_path is provided"
         )
+    if rebuild and not corpus_id:
+        raise HTTPException(
+            status_code=400,
+            detail="corpus_id is required when rebuild=true"
+        )
+    if rebuild and retry_failed_only:
+        raise HTTPException(
+            status_code=400,
+            detail="rebuild=true cannot be combined with retry_failed_only=true"
+        )
 
     # Validate corpus_id if provided
     if corpus_id:
@@ -159,6 +195,8 @@ async def run_ingest(
             desc = f"{corpus_id} (source: {source_path})"
         if retry_failed_only:
             desc = f"failed files for {desc}"
+        elif rebuild:
+            desc = f"rebuild of {desc}"
 
         running_state = _try_begin_ingest(
             job_id=job_id,
@@ -176,6 +214,7 @@ async def run_ingest(
             files_failed=0,
             percent_complete=0.0,
             retry_failed_only=retry_failed_only,
+            rebuild=rebuild,
             summary=None,
             log_file=str(log_path),
         )
@@ -191,6 +230,25 @@ async def run_ingest(
         run_logger(
             f"JOB id={job_id} description={desc} qdrant_url={pipeline.config.vector_db.url}"
         )
+
+        if rebuild and corpus_id:
+            _set_ingest_state(
+                job_id=job_id,
+                status="running",
+                message=f"Clearing existing data for rebuild of {corpus_id}",
+                current_corpus=corpus_id,
+                current_file=None,
+                percent_complete=0.0,
+            )
+            _reset_corpus_for_rebuild(pipeline, corpus_id, run_logger)
+            _set_ingest_state(
+                job_id=job_id,
+                status="running",
+                message=f"Rebuilding corpus {corpus_id} from source documents",
+                current_corpus=corpus_id,
+                current_file=None,
+                percent_complete=0.0,
+            )
 
         def progress_callback(update: Dict[str, Any]) -> None:
             _set_ingest_state(job_id=job_id, **update)

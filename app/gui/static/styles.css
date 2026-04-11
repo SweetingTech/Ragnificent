@@ -116,6 +116,34 @@ h1, h2, h3 {
     min-height: 100%;
 }
 
+.manage-corpus-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: start;
+}
+
+.manage-corpus-title {
+    min-width: 0;
+}
+
+.manage-corpus-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
+    gap: 0.75rem;
+    justify-content: end;
+    align-items: start;
+}
+
+.manage-corpus-actions form {
+    margin: 0;
+}
+
+.manage-corpus-actions .btn {
+    justify-content: center;
+    white-space: nowrap;
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;
@@ -382,3 +410,19 @@ pre {
 
 .toast-info { border-color: rgba(59, 130, 246, 0.4); }
 .toast-info .toast-icon { color: var(--accent); }
+
+@media (max-width: 900px) {
+    .manage-corpus-header {
+        grid-template-columns: 1fr;
+    }
+
+    .manage-corpus-actions {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        justify-content: stretch;
+    }
+
+    .manage-corpus-actions form,
+    .manage-corpus-actions .btn {
+        width: 100%;
+    }
+}
