@@ -18,14 +18,14 @@ RAGnificent is a document intelligence service that runs locally or connects to 
 
 ## Jazzy Workspace Gateway
 
-In the full `D:\Jazzy` stack, RAGnificent runs directly at `http://localhost:8018` and is also exposed through AgentsOfJazzy authenticated proxy endpoints:
+In the full Voltron workspace stack, RAGnificent runs directly at `http://localhost:8018` and is also exposed through AgentsOfJazzy authenticated proxy endpoints:
 
 - `http://localhost:9002/v1/ragnificent/health`
 - `http://localhost:9002/v1/ragnificent/corpora`
 - `http://localhost:9002/v1/ragnificent/ingest/run`
 - `http://localhost:9002/v1/ragnificent/query`
 
-AgentsOfJazzy gets its `x-auth` token from `D:\Jazzy\JazzyTheAI\.env` `AGENTS_AUTH`, so JazzyTheAI can call RAGnificent through AgentsOfJazzy without maintaining a second shared token.
+AgentsOfJazzy gets its `x-auth` token from `JazzyTheAI/.env` `AGENTS_AUTH`, so JazzyTheAI can call RAGnificent through AgentsOfJazzy without maintaining a second shared token.
 
 ---
 
@@ -191,11 +191,11 @@ RAGNIFICENT_URL=http://localhost:8018
 ### Option 2 — Bare Python (Windows)
 
 ```powershell
-.\scripts\windows\setup.ps1
+./scripts/windows/setup.ps1
 copy .env.example .env
 # Edit .env and add your API keys (optional)
-.\scripts\windows\init_state_db.ps1
-.\scripts\windows\run.ps1
+./scripts/windows/init_state_db.ps1
+./scripts/windows/run.ps1
 ```
 
 `setup.ps1` installs dependencies and, when `ollama` is available, pulls the required local models for the current configuration. `run.ps1` starts the full-restart watcher and, when `config.yaml` points Qdrant at `http://localhost:6333`, also tries to bring up the local `qdrant` container automatically.
@@ -223,7 +223,7 @@ python scripts/pull_ollama_models.py --mode catalog
 ### Stopping the server (Windows)
 
 ```powershell
-.\scripts\windows\stop.ps1
+./scripts/windows/stop.ps1
 ```
 
 This kills the entire process tree (watcher + uvicorn workers) and verifies the port is clear before returning.
@@ -267,7 +267,7 @@ If you change `.env`, restart the app. The watcher reloads code, templates, CSS,
 # Create a corpus pointed at any local folder
 curl -X POST http://localhost:8008/api/corpora \
   -H "Content-Type: application/json" \
-  -d '{"corpus_id":"my_docs","description":"My documents","source_path":"D:/documents/research","embedding_preset":"epub_general","embedding_provider":"openrouter","embedding_model":"qwen/qwen3-embedding-8b","chunk_strategy":"heading_then_paragraph","chunk_max_tokens":700,"chunk_overlap_tokens":120}'
+  -d '{"corpus_id":"my_docs","description":"My documents","source_path":"./documents/research","embedding_preset":"epub_general","embedding_provider":"openrouter","embedding_model":"qwen/qwen3-embedding-8b","chunk_strategy":"heading_then_paragraph","chunk_max_tokens":700,"chunk_overlap_tokens":120}'
 
 # Trigger ingestion
 curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs"
@@ -487,19 +487,19 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 Updated: 2026-04-13
 
-This README is part of the `D:\Jazzy` Voltron workspace documentation set. The current cross-stack workflow/auth paths are:
+This README is part of the Voltron workspace documentation set. The current cross-stack workflow/auth paths are:
 
-- Shared auth source: `D:\Jazzy\JazzyTheAI\.env`, variable `AGENTS_AUTH`.
-- AgentsOfJazzy auth loader: `D:\Jazzy\AgentsOfJazzy\packages\common\env_bridge.py`.
-- AgentsOfJazzy startup bridge: `D:\Jazzy\AgentsOfJazzy\start.ps1`; override the JazzyTheAI env path with `JAZZYTHEAI_ENV_PATH` when needed.
-- Auth compatibility files: `D:\Jazzy\AgentsOfJazzy\packages\common\auth.py`, `D:\Jazzy\AgentsOfJazzy\packages\common\credential_bridge.py`, `D:\Jazzy\AgentsOfJazzy\.env.example`, and `D:\Jazzy\AgentsOfJazzy\agentic\.env.example`.
+- Shared auth source: `JazzyTheAI/.env`, variable `AGENTS_AUTH`.
+- AgentsOfJazzy auth loader: `AgentsOfJazzy/packages/common/env_bridge.py`.
+- AgentsOfJazzy startup bridge: `AgentsOfJazzy/start.ps1`; override the JazzyTheAI env path with `JAZZYTHEAI_ENV_PATH` when needed.
+- Auth compatibility files: `AgentsOfJazzy/packages/common/auth.py`, `AgentsOfJazzy/packages/common/credential_bridge.py`, `AgentsOfJazzy/.env.example`, and `AgentsOfJazzy/agentic/.env.example`.
 - Auth bootstrap endpoints: `http://localhost:9002/v1/auth/bootstrap` for Control Hub and `http://localhost:7800/v1/auth/bootstrap` for Orchestrator.
-- Backend bootstrap implementations: `D:\Jazzy\AgentsOfJazzy\apps\control_hub\main.py`, `D:\Jazzy\AgentsOfJazzy\apps\orchestrator\main.py`, and `D:\Jazzy\AgentsOfJazzy\agentic\orchestrator\app\main.py`.
-- Frontend shared auth code: `D:\Jazzy\AgentsOfJazzy\agentic\orchestrator\app\static\common.js`; dashboard auth refresh code: `D:\Jazzy\AgentsOfJazzy\agentic\orchestrator\app\static\board.js`.
+- Backend bootstrap implementations: `AgentsOfJazzy/apps/control_hub/main.py`, `AgentsOfJazzy/apps/orchestrator/main.py`, and `AgentsOfJazzy/agentic/orchestrator/app/main.py`.
+- Frontend shared auth code: `AgentsOfJazzy/agentic/orchestrator/app/static/common.js`; dashboard auth refresh code: `AgentsOfJazzy/agentic/orchestrator/app/static/board.js`.
 - AgentsOfJazzy pages: dashboard `/static/index.html`, agents `/static/agents.html`, tools `/static/tools.html`, MCPs `/static/mcps.html`, APIs `/static/apis.html`, LLMs `/static/llms.html`, workflows `/static/workflows.html`, Threadwell feed `/static/threadwell.html`, Threadwell detail `/static/threadwell-detail.html?task_id=<task_id>`, history `/static/history.html`, sessions `/static/sessions.html`, Jazzy connection `/static/jazzy-connection.html`, task thread `/static/task-thread.html`, and connections `/static/connections.html`.
-- JazzyTheAI service-to-service settings: `AGENTS_URL=http://host.docker.internal:9002`, `AGENTS_ORCHESTRATOR_URL=http://host.docker.internal:7800`, and `AGENTS_AUTH=<shared token>` in `D:\Jazzy\JazzyTheAI\.env`.
+- JazzyTheAI service-to-service settings: `AGENTS_URL=http://host.docker.internal:9002`, `AGENTS_ORCHESTRATOR_URL=http://host.docker.internal:7800`, and `AGENTS_AUTH=<shared token>` in `JazzyTheAI/.env`.
 - Threadwell is the process board for each request; History is the terminal-result archive. History records should link back to the matching Threadwell thread when available.
-- Workflow/AAR JSON export target: `D:\Jazzy\Backup\AAR\JazzyWorkflows`.
+- Workflow/AAR JSON export target: `Backup/AAR/JazzyWorkflows`.
 - OpenClaw and Hermes connectors should be added through the AgentsOfJazzy tool/MCP/API registries so their APIs and MCPs can be selected inside workflow nodes.
 
 Do not document or export raw hidden chain-of-thought, API keys, cookies, OAuth refresh tokens, or other secrets. Threadwell and AAR records should contain structured process events, tool/API/MCP calls, visible agent messages, outcomes, timings, and redacted diagnostics only.
