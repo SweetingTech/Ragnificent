@@ -9,7 +9,8 @@
     <form hx-post="/api/query/ui" hx-target="#results" hx-indicator="#loading">
         <label style="display:block; margin-bottom:0.5rem;">Select Context (Librarian)</label>
         <select name="corpus_id">
-            <option value="" selected>No Specific Library (Ad-Hoc Chat)</option>
+            <option value="__all__" selected>All Deployed Libraries (RAG)</option>
+            <option value="">No Library (Ad-Hoc Chat)</option>
             {% for corpus in corpora %}
             <option value="{{ corpus.corpus_id }}">{{ corpus.corpus_id }}</option>
             {% endfor %}

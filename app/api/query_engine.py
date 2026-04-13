@@ -15,7 +15,11 @@ from ..providers.factory import (
     get_llm_provider,
 )
 from ..providers.reranker import RerankProvider
-from ..services.corpus_service import validate_corpus_id, CorpusValidationError
+from ..services.corpus_service import (
+    CorpusService,
+    validate_corpus_id,
+    CorpusValidationError,
+)
 from ..utils.logging import setup_logging
 from ..config.loader import load_config
 from ..config.schema import GlobalConfig
@@ -24,6 +28,7 @@ logger = setup_logging()
 
 # Default base URL for LLM providers (loaded from config when possible)
 DEFAULT_OLLAMA_URL = PROVIDER_DEFAULT_BASE_URLS["ollama"]
+ALL_CORPORA_SENTINELS = {"__all__", "all", "*"}
 
 
 class QueryEngine:
@@ -92,6 +97,22 @@ class QueryEngine:
 
         self._corpus_meta_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         self._embedder_cache: Dict[Tuple[str, str, str, Optional[str]], EmbeddingProvider] = {}
+        library_root = getattr(self.config, "library_root", "rag_library") if self.config else "rag_library"
+        self.corpus_service = CorpusService(library_root)
+
+    def _is_all_corpora_query(self, corpus_id: Optional[str]) -> bool:
+        return isinstance(corpus_id, str) and corpus_id.strip().lower() in ALL_CORPORA_SENTINELS
+
+    def _get_searchable_corpora(self) -> list[str]:
+        corpora = []
+        for metadata in self.corpus_service.get_all_corpora():
+            corpus_id = metadata.get("corpus_id")
+            if not corpus_id:
+                continue
+            if self.vector_service.get_count(corpus_id) <= 0:
+                continue
+            corpora.append(corpus_id)
+        return corpora
 
     def _get_corpus_config_path(self, corpus_id: str) -> Optional[Path]:
         """
@@ -243,8 +264,10 @@ class QueryEngine:
         """
         start_time = time.time()
 
+        all_corpora_query = self._is_all_corpora_query(corpus_id)
+
         # Validate corpus_id if provided
-        if corpus_id:
+        if corpus_id and not all_corpora_query:
             try:
                 validate_corpus_id(corpus_id)
             except CorpusValidationError as e:
@@ -256,9 +279,30 @@ class QueryEngine:
                     "time": time.time() - start_time
                 }
 
-        # 1. Embed & Search (only if corpus_id provided)
+        # 1. Embed & Search
         hits = []
-        if corpus_id:
+        if all_corpora_query:
+            try:
+                candidate_corpora = self._get_searchable_corpora()
+                initial_k = top_k * 3 if self.reranker else top_k
+                for search_corpus_id in candidate_corpora:
+                    embedder = self._resolve_embedder(search_corpus_id)
+                    query_vector = embedder.embed([query_text])[0]
+                    corpus_hits = self.vector_service.search(
+                        search_corpus_id,
+                        query_vector,
+                        limit=initial_k,
+                    )
+                    hits.extend(corpus_hits)
+            except Exception as e:
+                logger.error(f"Cross-corpus search failed: {e}")
+                return {
+                    "query": query_text,
+                    "hits": [],
+                    "answer": f"Search failed: {e}",
+                    "time": time.time() - start_time
+                }
+        elif corpus_id:
             try:
                 embedder = self._resolve_embedder(corpus_id)
                 query_vector = embedder.embed([query_text])[0]
@@ -277,10 +321,13 @@ class QueryEngine:
         # 2. Format hits
         formatted_hits = []
         for hit in hits:
+            payload = dict(hit.payload or {})
+            if corpus_id and self._is_all_corpora_query(corpus_id) and not payload.get("corpus_id"):
+                payload["corpus_id"] = payload.get("collection") or "unknown"
             formatted_hits.append({
                 "id": hit.id,
                 "score": hit.score,
-                "payload": hit.payload
+                "payload": payload
             })
 
         # Apply reranking if configured
@@ -290,17 +337,21 @@ class QueryEngine:
             except Exception as e:
                 logger.error(f"Reranking failed: {e}")
                 # Fallback to taking top_k if reranking fails
-                formatted_hits = formatted_hits[:top_k]
+                formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)[:top_k]
         else:
-            formatted_hits = formatted_hits[:top_k]
+            formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)[:top_k]
 
         # 3. Build context
         context_parts = []
         for hit in formatted_hits:
             meta = hit.get('payload', {})
+            corpus_name = meta.get('corpus_id')
             file_name = meta.get('file_name', 'unknown')
             page = meta.get('page', meta.get('chunk_index', '?'))
-            source = f"File: {file_name} (Section {page})"
+            if corpus_name:
+                source = f"Corpus: {corpus_name} | File: {file_name} (Section {page})"
+            else:
+                source = f"File: {file_name} (Section {page})"
             text = meta.get('text', '')
             context_parts.append(f"[{source}]:\n{text}")
 
@@ -318,7 +369,7 @@ class QueryEngine:
             except Exception as e:
                 logger.warning(f"Failed to create LLM with model {llm_model}: {e}")
                 llm = self.default_llm
-        elif corpus_id:
+        elif corpus_id and not all_corpora_query:
             # Use corpus-specific config
             llm = self._resolve_llm(corpus_id)
         else:

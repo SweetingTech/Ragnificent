@@ -3,16 +3,22 @@
 {% block title %}Manage {{ corpus.corpus_id }} - Ragnificent{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-8">
+<div class="manage-corpus-header">
+    <div class="manage-corpus-title">
         <h2>Librarian: {{ corpus.corpus_id }}</h2>
         <p style="color: var(--text-secondary);">{{ corpus.description }}</p>
     </div>
-    <div class="col-4" style="text-align: right; display: flex; gap: 0.75rem; justify-content: flex-end; flex-wrap: wrap;">
+    <div class="manage-corpus-actions">
         <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}"
                 hx-swap="none"
                 class="btn btn-primary">
             Sync Files Now
+        </button>
+        <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}&rebuild=true"
+                hx-swap="none"
+                hx-confirm="Rebuild '{{ corpus.corpus_id }}'? This clears the existing vectors and ingest state for this librarian, then reprocesses all source files from scratch."
+                class="btn">
+            Rebuild
         </button>
         <button hx-post="/api/ingest/run?corpus_id={{ corpus.corpus_id }}&retry_failed_only=true"
                 hx-swap="none"
@@ -87,7 +93,10 @@
 
     <div class="card">
         <h3>Ingest Status</h3>
-        <p>Syncing scans the source folder for new or changed files.</p>
+        <p>Sync scans the source folder for new or changed files.</p>
+        <p style="color: var(--text-secondary); font-size: 0.85rem;">
+            Rebuild clears this librarian's existing vectors and ingest state, then reprocesses every source file from scratch using the current OCR/chunking/embedding pipeline.
+        </p>
         <p style="color: var(--text-secondary); font-size: 0.85rem;">
             Retry Failed re-queues only files recorded as failed for this librarian. Vector count updates every 30 seconds.
         </p>

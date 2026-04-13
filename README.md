@@ -16,6 +16,19 @@ RAGnificent is a document intelligence service that runs locally or connects to 
 
 ---
 
+## Jazzy Workspace Gateway
+
+In the full `D:\Jazzy` stack, RAGnificent runs directly at `http://localhost:8018` and is also exposed through AgentsOfJazzy authenticated proxy endpoints:
+
+- `http://localhost:9002/v1/ragnificent/health`
+- `http://localhost:9002/v1/ragnificent/corpora`
+- `http://localhost:9002/v1/ragnificent/ingest/run`
+- `http://localhost:9002/v1/ragnificent/query`
+
+AgentsOfJazzy gets its `x-auth` token from `D:\Jazzy\JazzyTheAI\.env` `AGENTS_AUTH`, so JazzyTheAI can call RAGnificent through AgentsOfJazzy without maintaining a second shared token.
+
+---
+
 ## What Makes This Different
 
 | | Typical local RAG | RAGnificent |
@@ -84,6 +97,7 @@ graph TD
 - OpenAI-compatible embedding requests are batched with retry/backoff so large PDFs and textbook-scale corpora are less likely to fail on remote embedding providers
 - Live ingest progress from `/api/ingest/status` and the GUI overlay: total files, completed count, current file, processed/skipped/failed counts, percent complete
 - Retry failed files from the corpus management page without re-running a full corpus scan
+- Rebuild a corpus from the Manage page or API: clears that corpus's existing vectors + ingest state, then reprocesses all source files from scratch with the current pipeline
 
 ### Per-Corpus Isolation
 - Each corpus gets its own Qdrant collection — no cross-contamination between document sets
@@ -129,6 +143,7 @@ graph TD
 - Live feedback: spinner overlay during operations, toast notifications on completion
 - Corpus creation flow includes ingest-time embedding presets plus manual overrides for provider, model, base URL, and chunking
 - Corpus management page shows embedding preset, embedding model, chunking settings, failed-file count, sync progress, and a retry-failed action
+- Corpus management page also includes a `Rebuild` action for full corpus reprocessing without deleting the corpus definition itself
 - REST API: health, query, ingest trigger, connection test endpoints
 - CLI: `init-db`, `serve`, `ingest`, `ingest-file` commands
 
@@ -153,6 +168,24 @@ cp .env.example .env
 # Edit .env and add your API keys (optional — only needed for cloud providers)
 docker-compose up -d
 # Service: http://localhost:8008
+```
+
+When running RAGnificent inside the full Jazzy workspace, Agent Builder owns host port `8008`. Set the host-published RAGnificent port before starting Docker:
+
+```env
+RAGNIFICENT_HOST_PORT=8018
+```
+
+With that setting, RAGnificent still listens on `8008` inside the container, but the host URL becomes:
+
+```text
+http://localhost:8018
+```
+
+AgentsOfJazzy should then use:
+
+```env
+RAGNIFICENT_URL=http://localhost:8018
 ```
 
 ### Option 2 — Bare Python (Windows)
@@ -239,6 +272,9 @@ curl -X POST http://localhost:8008/api/corpora \
 # Trigger ingestion
 curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs"
 
+# Rebuild a corpus from scratch using the current OCR/chunking/embedding pipeline
+curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs&rebuild=true"
+
 # Retry only failed files for a corpus
 curl -X POST "http://localhost:8008/api/ingest/run?corpus_id=my_docs&retry_failed_only=true"
 
@@ -257,6 +293,7 @@ curl -X POST http://localhost:8008/api/test-connection \
 
 ```bash
 python -m app.cli ingest --corpus <corpus_id>
+python -m app.cli ingest --corpus <corpus_id> --rebuild
 python -m app.cli ingest-file /path/to/file.pdf --corpus <corpus_id>
 ```
 
@@ -297,6 +334,7 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/ingest/run` | Trigger ingestion (`?corpus_id=<id>` or all). Returns `409` if another ingest job is already running |
+| `POST` | `/api/ingest/run?rebuild=true` | Rebuild one corpus from scratch: clears its existing vectors + ingest state, then reprocesses all source files |
 | `POST` | `/api/ingest/run?retry_failed_only=true` | Retry only failed files for a corpus |
 | `GET` | `/api/ingest/status` | Current ingestion status, counts, current file, and progress percentage |
 
@@ -445,3 +483,23 @@ Glen Burnie, MD · 443-763-7955 · douglas.j.sweeting@gmail.com · [github.com/S
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
+## Jazzy Workspace Integration Paths
+
+Updated: 2026-04-13
+
+This README is part of the `D:\Jazzy` Voltron workspace documentation set. The current cross-stack workflow/auth paths are:
+
+- Shared auth source: `D:\Jazzy\JazzyTheAI\.env`, variable `AGENTS_AUTH`.
+- AgentsOfJazzy auth loader: `D:\Jazzy\AgentsOfJazzy\packages\common\env_bridge.py`.
+- AgentsOfJazzy startup bridge: `D:\Jazzy\AgentsOfJazzy\start.ps1`; override the JazzyTheAI env path with `JAZZYTHEAI_ENV_PATH` when needed.
+- Auth compatibility files: `D:\Jazzy\AgentsOfJazzy\packages\common\auth.py`, `D:\Jazzy\AgentsOfJazzy\packages\common\credential_bridge.py`, `D:\Jazzy\AgentsOfJazzy\.env.example`, and `D:\Jazzy\AgentsOfJazzy\agentic\.env.example`.
+- Auth bootstrap endpoints: `http://localhost:9002/v1/auth/bootstrap` for Control Hub and `http://localhost:7800/v1/auth/bootstrap` for Orchestrator.
+- Backend bootstrap implementations: `D:\Jazzy\AgentsOfJazzy\apps\control_hub\main.py`, `D:\Jazzy\AgentsOfJazzy\apps\orchestrator\main.py`, and `D:\Jazzy\AgentsOfJazzy\agentic\orchestrator\app\main.py`.
+- Frontend shared auth code: `D:\Jazzy\AgentsOfJazzy\agentic\orchestrator\app\static\common.js`; dashboard auth refresh code: `D:\Jazzy\AgentsOfJazzy\agentic\orchestrator\app\static\board.js`.
+- AgentsOfJazzy pages: dashboard `/static/index.html`, agents `/static/agents.html`, tools `/static/tools.html`, MCPs `/static/mcps.html`, APIs `/static/apis.html`, LLMs `/static/llms.html`, workflows `/static/workflows.html`, Threadwell feed `/static/threadwell.html`, Threadwell detail `/static/threadwell-detail.html?task_id=<task_id>`, history `/static/history.html`, sessions `/static/sessions.html`, Jazzy connection `/static/jazzy-connection.html`, task thread `/static/task-thread.html`, and connections `/static/connections.html`.
+- JazzyTheAI service-to-service settings: `AGENTS_URL=http://host.docker.internal:9002`, `AGENTS_ORCHESTRATOR_URL=http://host.docker.internal:7800`, and `AGENTS_AUTH=<shared token>` in `D:\Jazzy\JazzyTheAI\.env`.
+- Threadwell is the process board for each request; History is the terminal-result archive. History records should link back to the matching Threadwell thread when available.
+- Workflow/AAR JSON export target: `D:\Jazzy\Backup\AAR\JazzyWorkflows`.
+- OpenClaw and Hermes connectors should be added through the AgentsOfJazzy tool/MCP/API registries so their APIs and MCPs can be selected inside workflow nodes.
+
+Do not document or export raw hidden chain-of-thought, API keys, cookies, OAuth refresh tokens, or other secrets. Threadwell and AAR records should contain structured process events, tool/API/MCP calls, visible agent messages, outcomes, timings, and redacted diagnostics only.

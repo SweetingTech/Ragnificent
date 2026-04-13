@@ -22,7 +22,7 @@ services:
     depends_on:
       - qdrant
     ports:
-      - "8008:8008"
+      - "${RAGNIFICENT_HOST_PORT:-8008}:8008"
     restart: unless-stopped
 
 volumes:
