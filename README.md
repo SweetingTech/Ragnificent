@@ -1,5 +1,18 @@
 # RAGnificent
 
+## Agent Operating Instructions
+
+This document is a standalone operating brief for human-agent pair programming. Agents must treat the guidance here as actionable working instructions, not background context.
+
+When working from this file:
+
+- Treat repeated setup, auth, path, and workflow context as intentional. Do not remove, collapse, or replace repeated blocks just to reduce duplication.
+- Prefer repository-relative and workspace-relative paths. Do not introduce workstation-specific absolute paths unless documenting a user-provided local override.
+- Preserve enough context for another agent to act from this file alone, including purpose, entry points, auth expectations, integration paths, run/test commands, and safety constraints.
+- Keep secrets out of documentation. Use variable names and placeholders for tokens, cookies, API keys, OAuth refresh tokens, and credentials.
+- If behavior, paths, ports, auth, workflow routing, or integration contracts change, update this file in the same change set.
+- Keep the documentation agent-operable: concrete commands, expected locations, and current assumptions are more useful than high-level summaries.
+
 <div align="center">
 
 **Built in an afternoon because every other local RAG setup was either
