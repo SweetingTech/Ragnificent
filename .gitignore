@@ -69,6 +69,7 @@ rag_library/logs/*
 !rag_library/logs/.gitkeep
 rag_library/logs/ingest/*
 !rag_library/logs/ingest/.gitkeep
+rag_library/agent_harness_aar_sources/
 
 # User Content (Inbox) - Keep the folder, ignore the content
 rag_library/corpora/

@@ -40,6 +40,20 @@ In the full Voltron workspace stack, RAGnificent runs directly at `http://localh
 
 AgentsOfJazzy gets its `x-auth` token from `JazzyTheAI/.env` `AGENTS_AUTH`, so JazzyTheAI can call RAGnificent through AgentsOfJazzy without maintaining a second shared token.
 
+## Trombone Memory Role
+
+Updated: 2026-04-20
+
+RAGnificent is the vector-memory backend for Trombone's AAR learning and operator memory, but Trombone should not manage vector internals directly. Agent Harness routes memory work to `ragnificent_vector_agent`, which owns RAGnificent health, corpus creation, AAR reindexing, query behavior, and proposed RAGnificent changes.
+
+The dedicated Trombone corpus is:
+
+```text
+trombone-operator-memory
+```
+
+That corpus contains Trombone-only operator docs, recent AAR lessons, failure lessons, self-improvement lessons, agent manifests, and routing/governance context. It must remain separate from Jazzy chat/user memory corpora. Allowlisted auxiliary reference corpora such as `LLM` and `LLM_cookbooks` may support technical answers. Denied corpora such as `smut` and `smutt` must not be used for Trombone operator responses.
+
 ---
 
 ## What Makes This Different
