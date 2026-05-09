@@ -117,17 +117,41 @@ async def agenda_evidence(
     """Return read-only corpus inventory for Trombone agenda refreshes."""
 
     corpora = _corpus_inventory(corpus_service, vector_service)
+    generated_at = datetime.now(timezone.utc).isoformat()
     return {
-        "source": "ragnificent",
+        "system": "RAGnificent",
+        "evidenceType": "governed_retrieval",
+        "generatedAt": generated_at,
         "readOnly": True,
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "corpora": corpora,
-        "retrievalPolicy": {
+        "confidence": 0.82,
+        "capabilities": ["corpus_inventory", "corpus_search", "citation_return", "policy_filtering"],
+        "sources": [
+            {
+                "kind": "corpus",
+                "ref": str(corpus["corpus_id"]),
+                "title": str(corpus["corpus_id"]),
+                "confidence": 0.75 if corpus.get("vector_count") else 0.35,
+            }
+            for corpus in corpora
+        ],
+        "brief": {
+            "corpora": corpora,
+            "allowedCorpora": [str(corpus["corpus_id"]) for corpus in corpora],
+            "deniedCorpora": [],
+            "queryTargets": [str(corpus["corpus_id"]) for corpus in corpora if corpus.get("vector_count")],
+            "citations": [],
+            "retrievalPolicy": {
             "callerSuppliesAllowedCorpora": True,
             "callerSuppliesDeniedCorpora": True,
             "mutationAllowed": False,
+            },
         },
-        "agendaEvidenceKinds": ["corpora", "vector_counts", "governed_retrieval", "citations"],
+        "risks": ["Results depend on corpus freshness."],
+        "warnings": [],
+        "metadata": {
+            "source": "ragnificent",
+            "agendaEvidenceKinds": ["corpora", "vector_counts", "governed_retrieval", "citations"],
+        },
     }
 
 
@@ -166,15 +190,40 @@ async def agenda_evidence_brief(
     elif request.query and not policy["queryAllowed"]:
         query_error = "No allowed RAGnificent corpora were available for this agenda evidence request."
 
+    generated_at = datetime.now(timezone.utc).isoformat()
+    warnings = [query_error] if query_error else []
     return {
-        "source": "ragnificent",
+        "system": "RAGnificent",
+        "evidenceType": "governed_retrieval",
+        "generatedAt": generated_at,
         "readOnly": True,
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "query": request.query,
-        "policy": policy,
-        "corpora": corpora,
-        "answer": answer,
-        "citations": citations,
-        "queryError": query_error,
-        "agendaEvidenceKinds": ["corpora", "governed_vector_search", "citation_excerpts", "source_confidence"],
+        "confidence": 0.86 if citations else 0.55,
+        "capabilities": ["corpus_search", "citation_return", "policy_filtering"],
+        "sources": [
+            {
+                "kind": "corpus",
+                "ref": str(citation.get("corpus_id") or "unknown"),
+                "title": str(citation.get("file_name") or citation.get("source_ref") or "RAGnificent citation"),
+                "citationId": str(citation.get("source_ref") or citation.get("payload", {}).get("hit_id") or ""),
+                "contentHash": str(citation.get("content_hash") or ""),
+                "confidence": float(citation.get("score") or 0.75),
+            }
+            for citation in citations
+        ],
+        "brief": {
+            "query": request.query,
+            "policy": policy,
+            "corpora": corpora,
+            "answer": answer,
+            "allowedCorpora": policy["allowed"],
+            "deniedCorpora": policy["denied"],
+            "queryTargets": policy["effective"],
+            "citations": citations,
+        },
+        "risks": ["Results depend on corpus freshness."],
+        "warnings": warnings,
+        "metadata": {
+            "source": "ragnificent",
+            "agendaEvidenceKinds": ["corpora", "governed_vector_search", "citation_excerpts", "source_confidence"],
+        },
     }
