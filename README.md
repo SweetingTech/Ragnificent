@@ -1,5 +1,11 @@
 # RAGnificent
 
+## Voltron Canonical Envelope
+
+Voltron is the spine of the Jazzy stack and owns the canonical cross-system envelope. This folder's role: Memory/retrieval cortex / grounded knowledge and citations. Reports governed_retrieval evidence with corpus and citation provenance.
+
+Current boundary messages should use the shared outer fields documented in D:\Jazzy\docs\canonical-envelope.md: schemaVersion, system, producer, agent, messageType, generatedAt, correlationId, readOnly, confidence, sources, brief, payload, risks, warnings, and metadata. Keep native details inside brief or payload; do not flatten system-specific records.
+
 ## Agent Operating Instructions
 
 This document is a standalone operating brief for human-agent pair programming. Agents must treat the guidance here as actionable working instructions, not background context.

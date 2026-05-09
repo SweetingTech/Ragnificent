@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, List, Set
+from typing import Iterable, List, Optional, Set
 
 import yaml
 
@@ -160,7 +160,8 @@ def dedupe_keep_order(models: Iterable[str]) -> List[str]:
     return ordered
 
 
-def models_to_pull(mode: str, catalog_models: List[str], ocr_models: List[str]) -> List[str]:
+def models_to_pull(mode: str, catalog_models: List[str], ocr_models: Optional[List[str]] = None) -> List[str]:
+    ocr_models = ocr_models or []
     if mode == "required":
         return dedupe_keep_order([*DEFAULT_REQUIRED_MODELS, *ocr_models])
     if mode == "catalog":

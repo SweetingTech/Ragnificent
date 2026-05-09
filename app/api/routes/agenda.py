@@ -3,7 +3,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from ...services.corpus_service import CorpusService
@@ -111,6 +111,7 @@ def _citation_from_hit(hit: Dict[str, Any], index: int) -> Dict[str, Any]:
 
 @router.get("/evidence")
 async def agenda_evidence(
+    request: Request,
     corpus_service: CorpusService = Depends(get_corpus_service),
     vector_service: VectorService = Depends(get_vector_service),
 ) -> Dict[str, Any]:
@@ -118,10 +119,16 @@ async def agenda_evidence(
 
     corpora = _corpus_inventory(corpus_service, vector_service)
     generated_at = datetime.now(timezone.utc).isoformat()
+    correlation_id = request.headers.get("X-Correlation-ID") or f"ragnificent-agenda-{generated_at}"
     return {
+        "schemaVersion": "1.0.0",
         "system": "RAGnificent",
+        "producer": "ragnificent.retrievalApi",
+        "agent": "ragnificent",
+        "messageType": "provider.evidence",
         "evidenceType": "governed_retrieval",
         "generatedAt": generated_at,
+        "correlationId": correlation_id,
         "readOnly": True,
         "confidence": 0.82,
         "capabilities": ["corpus_inventory", "corpus_search", "citation_return", "policy_filtering"],
@@ -146,6 +153,14 @@ async def agenda_evidence(
             "mutationAllowed": False,
             },
         },
+        "payload": {
+            "native": {
+                "corpora": corpora,
+                "allowedCorpora": [str(corpus["corpus_id"]) for corpus in corpora],
+                "deniedCorpora": [],
+                "queryTargets": [str(corpus["corpus_id"]) for corpus in corpora if corpus.get("vector_count")],
+            }
+        },
         "risks": ["Results depend on corpus freshness."],
         "warnings": [],
         "metadata": {
@@ -157,6 +172,7 @@ async def agenda_evidence(
 
 @router.post("/evidence/brief")
 async def agenda_evidence_brief(
+    fastapi_request: Request,
     request: AgendaEvidenceRequest,
     corpus_service: CorpusService = Depends(get_corpus_service),
     vector_service: VectorService = Depends(get_vector_service),
@@ -191,11 +207,17 @@ async def agenda_evidence_brief(
         query_error = "No allowed RAGnificent corpora were available for this agenda evidence request."
 
     generated_at = datetime.now(timezone.utc).isoformat()
+    correlation_id = fastapi_request.headers.get("X-Correlation-ID") or f"ragnificent-agenda-{generated_at}"
     warnings = [query_error] if query_error else []
     return {
+        "schemaVersion": "1.0.0",
         "system": "RAGnificent",
+        "producer": "ragnificent.retrievalApi",
+        "agent": "ragnificent",
+        "messageType": "provider.evidence",
         "evidenceType": "governed_retrieval",
         "generatedAt": generated_at,
+        "correlationId": correlation_id,
         "readOnly": True,
         "confidence": 0.86 if citations else 0.55,
         "capabilities": ["corpus_search", "citation_return", "policy_filtering"],
@@ -219,6 +241,15 @@ async def agenda_evidence_brief(
             "deniedCorpora": policy["denied"],
             "queryTargets": policy["effective"],
             "citations": citations,
+        },
+        "payload": {
+            "native": {
+                "request": request.model_dump(),
+                "policy": policy,
+                "corpora": corpora,
+                "citations": citations,
+                "answer": answer,
+            }
         },
         "risks": ["Results depend on corpus freshness."],
         "warnings": warnings,
