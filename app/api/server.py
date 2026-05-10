@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from .routes import health, query, ingest, corpora, test_connection
+from .routes import health, query, ingest, corpora, test_connection, agenda
 from ..gui import routes as gui_routes
 from ..utils.logging import setup_logging
 from ..vector.qdrant_client import VectorService, get_connection_error
@@ -76,6 +76,7 @@ def create_app():
     app.include_router(query.router, prefix="/api")
     app.include_router(ingest.router, prefix="/api")
     app.include_router(corpora.router, prefix="/api")
+    app.include_router(agenda.router, prefix="/api")
     app.include_router(test_connection.router, prefix="/api")
     app.include_router(gui_routes.router)
 
