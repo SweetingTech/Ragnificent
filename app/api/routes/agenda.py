@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +13,7 @@ from .corpora import get_corpus_service, get_vector_service
 from .query import get_query_engine
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
+logger = logging.getLogger(__name__)
 
 
 class AgendaEvidenceRequest(BaseModel):
@@ -47,8 +49,9 @@ def _corpus_inventory(
             vector_count = vector_service.get_count(corpus_id)
             vector_error = None
         except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to read vector count for agenda corpus %s: %s", corpus_id, exc)
             vector_count = 0
-            vector_error = str(exc)
+            vector_error = "vector_count_unavailable"
         entry = {
             "corpus_id": corpus_id,
             "description": meta.get("description", ""),
@@ -71,7 +74,7 @@ def _effective_corpora(
     allowed = set(request.allowed_corpora or available)
     denied = set(request.denied_corpora or [])
     if request.corpus_id and request.corpus_id not in {"__all__", "all", "*"}:
-        allowed = {request.corpus_id}
+        allowed = allowed & {request.corpus_id}
     effective = sorted((available & allowed) - denied)
     requested_denied = bool(request.corpus_id and request.corpus_id in denied)
     return {
@@ -83,6 +86,36 @@ def _effective_corpora(
         "queryAllowed": bool(effective) and not requested_denied,
         "readOnly": True,
         "note": "Agenda retrieval uses allow/deny filters supplied by Trombone and never ingests or mutates corpora.",
+    }
+
+
+async def _query_allowed_corpora(
+    engine: Any,
+    query: str,
+    corpus_ids: List[str],
+    top_k: int,
+) -> Dict[str, Any]:
+    all_hits: List[Dict[str, Any]] = []
+    answer_parts: List[str] = []
+    elapsed = 0.0
+
+    for corpus_id in corpus_ids:
+        result = await asyncio.to_thread(engine.query, query, corpus_id, top_k, None)
+        if isinstance(result, dict):
+            elapsed += float(result.get("time") or 0.0)
+            hits = result.get("hits")
+            if isinstance(hits, list):
+                all_hits.extend(hit for hit in hits if isinstance(hit, dict))
+            answer = result.get("answer")
+            if isinstance(answer, str) and answer.strip():
+                answer_parts.append(f"[{corpus_id}] {answer.strip()}")
+
+    all_hits = sorted(all_hits, key=lambda hit: float(hit.get("score") or 0.0), reverse=True)[:top_k]
+    return {
+        "query": query,
+        "hits": all_hits,
+        "answer": "\n\n".join(answer_parts) if answer_parts else None,
+        "time": elapsed,
     }
 
 
@@ -148,9 +181,9 @@ async def agenda_evidence(
             "queryTargets": [str(corpus["corpus_id"]) for corpus in corpora if corpus.get("vector_count")],
             "citations": [],
             "retrievalPolicy": {
-            "callerSuppliesAllowedCorpora": True,
-            "callerSuppliesDeniedCorpora": True,
-            "mutationAllowed": False,
+                "callerSuppliesAllowedCorpora": True,
+                "callerSuppliesDeniedCorpora": True,
+                "mutationAllowed": False,
             },
         },
         "payload": {
@@ -190,11 +223,13 @@ async def agenda_evidence_brief(
         engine = get_query_engine()
         corpus_id = request.corpus_id
         if not corpus_id or corpus_id in {"__all__", "all", "*"}:
-            corpus_id = "__all__"
+            result = await _query_allowed_corpora(engine, request.query, policy["effective"], top_k)
         elif corpus_id not in policy["effective"]:
             query_error = f"Corpus '{corpus_id}' is not allowed for this agenda evidence request."
-        if not query_error:
+            result = None
+        else:
             result = await asyncio.to_thread(engine.query, request.query, corpus_id, top_k, None)
+        if not query_error:
             hits = result.get("hits") if isinstance(result, dict) else []
             citations = [
                 _citation_from_hit(hit, index)
