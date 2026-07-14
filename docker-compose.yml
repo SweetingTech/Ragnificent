@@ -2,7 +2,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
@@ -22,7 +22,7 @@ services:
     depends_on:
       - qdrant
     ports:
-      - "${RAGNIFICENT_HOST_PORT:-8008}:8008"
+      - "127.0.0.1:${RAGNIFICENT_HOST_PORT:-8008}:8008"
     restart: unless-stopped
 
 volumes:

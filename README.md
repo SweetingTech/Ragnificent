@@ -37,7 +37,7 @@ RAGnificent is a document intelligence service that runs locally or connects to 
 
 ## Jazzy Workspace Gateway
 
-In the full Voltron workspace stack, RAGnificent runs directly at `http://localhost:8018` and is also exposed through AgentsOfJazzy authenticated proxy endpoints:
+In the full Voltron workspace stack, RAGnificent runs directly at `http://localhost:8018` on the local host only and is also exposed through AgentsOfJazzy authenticated proxy endpoints:
 
 - `http://localhost:9002/v1/ragnificent/health`
 - `http://localhost:9002/v1/ragnificent/corpora`
