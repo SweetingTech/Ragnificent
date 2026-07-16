@@ -17,9 +17,16 @@ index, and Wiki page are derived views; none may replace the source Git file.
 
 ## Deploy the corpus
 
-1. Copy [voltron-repository-docs.corpus.yaml](voltron-repository-docs.corpus.yaml)
-   to the ignored runtime path
-   `rag_library/corpora/voltron-repository-docs/corpus.yaml`.
+1. Install [voltron-repository-docs.corpus.yaml](voltron-repository-docs.corpus.yaml)
+   at the ignored runtime path
+   `rag_library/corpora/voltron-repository-docs/corpus.yaml`:
+
+   ```powershell
+   .\scripts\windows\Install-VoltronRepositoryDocsCorpus.ps1
+   ```
+
+   The installer never overwrites an existing runtime corpus configuration
+   unless an operator passes `-Force` after reviewing the template diff.
 2. Docker Compose mounts the host snapshot directory into the container
    read-only:
 
