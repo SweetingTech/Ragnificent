@@ -328,7 +328,8 @@ class QueryEngine:
         query_text: str,
         corpus_id: Optional[str] = None,
         top_k: int = 5,
-        llm_model: Optional[str] = None
+        llm_model: Optional[str] = None,
+        generate_answer: bool = True,
     ) -> Dict[str, Any]:
         """
         Execute a RAG query.
@@ -423,6 +424,18 @@ class QueryEngine:
             formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)[:top_k]
 
         citations = self._repository_documentation_citations(formatted_hits)
+
+        # Read-only infrastructure callers (for example, Trombone's docs
+        # preflight) need deterministic vector citations, not an extra model
+        # turn. Keep the default unchanged for the human RAG endpoint.
+        if not generate_answer:
+            return {
+                "query": query_text,
+                "hits": formatted_hits,
+                "citations": citations,
+                "answer": None,
+                "time": time.time() - start_time,
+            }
 
         # 3. Build context
         context_parts = []

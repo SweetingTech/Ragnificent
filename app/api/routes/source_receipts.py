@@ -171,6 +171,17 @@ def ingest_source_receipt(
             expected_hash=receipt["content_sha256"],
             documentation_provenance=receipt.get("documentation_provenance"),
         )
+        # The pipeline returns a structured outcome instead of raising for
+        # expected extraction/embedding failures. A receipt is only
+        # "ingested" when the exact file was actually indexed (or was already
+        # indexed unchanged); otherwise downstream retrieval could silently be
+        # empty despite a false-success receipt.
+        if str(summary.get("status") or "").lower() not in {"processed", "skipped"}:
+            service.mark_failed(receipt_id, "ingest_failed")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Receipt ingestion did not produce an indexed document. Inspect the controlled ingest logs with the correlation ID.",
+            )
         service.mark_ingested(receipt_id, summary)
         return service.get_receipt(receipt_id)
     except Exception:  # The details may contain filesystem/provider data.

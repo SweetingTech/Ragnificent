@@ -326,6 +326,35 @@ def test_source_receipts_schema_migrates_legacy_rows_to_local_only(tmp_path):
     assert row["wiki_publication"] == "local_only"
 
 
+def test_source_receipts_schema_repairs_a_provably_failed_legacy_ingest(tmp_path):
+    db = Database(str(tmp_path / "state" / "legacy-failed.sqlite"))
+    schema = Path(__file__).parents[1] / "app" / "state" / "schema.sql"
+    db.init_db(str(schema))
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_receipts (
+              receipt_id, workspace_id, corpus_id, source_kind, source_system,
+              locator_root_id, locator_relative_path, content_sha256, privacy,
+              idempotency_key, status, ingest_summary_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "failed-legacy-receipt", "voltron", "demo", "agent_artifact", "agent_harness",
+                "agent_harness_aar_sources", "operator/lesson.md", "a" * 64, "internal",
+                "legacy-failed-key", "ingested", '{"status":"failed"}',
+            ),
+        )
+
+    ensure_source_receipts_schema(db)
+
+    with db.cursor() as cursor:
+        row = cursor.execute(
+            "SELECT status FROM source_receipts WHERE receipt_id = 'failed-legacy-receipt'"
+        ).fetchone()
+    assert row["status"] == "failed"
+
+
 def test_source_receipt_rejects_untrusted_or_escaping_locator(tmp_path, monkeypatch):
     config = _config(tmp_path)
     _write_corpus(config)
@@ -404,6 +433,35 @@ def test_source_receipt_ingests_only_the_receipted_file(tmp_path, monkeypatch):
     assert len(pipeline.calls) == 1
     assert pipeline.calls[0]["receipt_id"] == receipt_id
     assert pipeline.calls[0]["canonical_locator"].endswith(receipt_id)
+
+
+def test_source_receipt_does_not_mark_a_failed_pipeline_outcome_as_ingested(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _write_corpus(config)
+    _, content_hash = _source_file(config)
+    db = _database(config)
+    monkeypatch.setenv("RAGNIFICENT_INTERNAL_TOKEN", "receipt-test-token")
+
+    class Pipeline:
+        def ingest_receipted_file(self, **kwargs):
+            return {
+                "status": "failed",
+                "file_hash": kwargs["expected_hash"],
+                "source_receipt_id": kwargs["receipt_id"],
+            }
+
+    app = _app(config, db)
+    app.dependency_overrides[source_receipts.get_pipeline] = Pipeline
+    headers = {"X-Ragnificent-Token": "receipt-test-token"}
+    with TestClient(app) as client:
+        created = client.post("/api/source-receipts", json=_payload(content_hash), headers=headers)
+        receipt_id = created.json()["receipt_id"]
+        ingested = client.post(f"/api/source-receipts/{receipt_id}/ingest", headers=headers)
+        inspected = client.get(f"/api/source-receipts/{receipt_id}", headers=headers)
+
+    assert ingested.status_code == 500
+    assert inspected.status_code == 200
+    assert inspected.json()["status"] == "failed"
 
 
 def test_repository_docs_receipts_require_the_narrow_snapshot_root_and_preserve_provenance(

@@ -11,8 +11,8 @@ class _Engine:
     def __init__(self):
         self.calls = []
 
-    def query(self, query_text, corpus_id=None, top_k=5, llm_model=None):
-        self.calls.append((query_text, corpus_id, top_k, llm_model))
+    def query(self, query_text, corpus_id=None, top_k=5, llm_model=None, generate_answer=True):
+        self.calls.append((query_text, corpus_id, top_k, llm_model, generate_answer))
         return {"query": query_text, "hits": [], "answer": "ok", "time": 0.01}
 
 
@@ -32,7 +32,7 @@ def test_http_query_model_override_is_opt_in_but_normal_queries_remain_available
 
     assert normal.status_code == 200
     assert blocked.status_code == 400
-    assert engine.calls == [("normal retrieval", None, 5, None)]
+    assert engine.calls == [("normal retrieval", None, 5, None, True)]
 
 
 class _DocumentationHit:
@@ -110,9 +110,28 @@ def test_repository_docs_query_returns_pinned_provenance_citations(tmp_path):
     ]
 
 
+def test_repository_docs_vector_only_query_skips_answer_model(tmp_path):
+    engine = QueryEngine(
+        vector_service=_DocumentationVectorService(),
+        embedder=_Embedder(),
+        default_llm=None,
+        config=_query_config(tmp_path),
+    )
+
+    result = engine.query(
+        "What owns Trombone?",
+        corpus_id="voltron-repository-docs",
+        generate_answer=False,
+    )
+
+    assert result["answer"] is None
+    assert len(result["hits"]) == 1
+    assert len(result["citations"]) == 1
+
+
 def test_query_route_preserves_repository_documentation_citations():
     class CitationEngine:
-        def query(self, query_text, corpus_id=None, top_k=5, llm_model=None):
+        def query(self, query_text, corpus_id=None, top_k=5, llm_model=None, generate_answer=True):
             return {
                 "query": query_text,
                 "answer": "Grounded answer",

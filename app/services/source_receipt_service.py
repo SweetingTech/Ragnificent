@@ -223,6 +223,27 @@ def ensure_source_receipts_schema(db: Database) -> None:
                 WIKI_PUBLICATION_LOCAL_ONLY,
             ),
         )
+        # Older route versions treated a structured pipeline result of
+        # ``failed`` as if it had been ingested. Repair only those provably
+        # false-success rows; receipts without a summary remain untouched for
+        # compatibility and can be inspected normally.
+        if {"status", "ingest_summary_json"}.issubset(columns):
+            for row in conn.execute(
+                """
+                SELECT receipt_id, ingest_summary_json
+                FROM source_receipts
+                WHERE status = 'ingested' AND ingest_summary_json IS NOT NULL
+                """
+            ).fetchall():
+                try:
+                    summary = json.loads(row["ingest_summary_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(summary, dict) and str(summary.get("status") or "").lower() not in {"processed", "skipped"}:
+                    conn.execute(
+                        "UPDATE source_receipts SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE receipt_id = ?",
+                        (row["receipt_id"],),
+                    )
 
 
 def _row_to_record(row: Any) -> dict[str, Any]:

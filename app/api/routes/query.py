@@ -35,6 +35,9 @@ class QueryRequest(BaseModel):
     corpus_id: Optional[str] = None
     top_k: int = 5
     llm_model: Optional[str] = None
+    # Internal callers that only need vector citations can bypass answer-model
+    # generation. This keeps deterministic repository preflight lightweight.
+    generate_answer: bool = True
 
 
 class QueryResponse(BaseModel):
@@ -167,7 +170,8 @@ async def query_api(
         request.query,
         request.corpus_id,
         request.top_k,
-        request.llm_model
+        request.llm_model,
+        request.generate_answer,
     )
 
     # Use the actual answer from the engine (LLM-generated)

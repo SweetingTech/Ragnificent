@@ -21,10 +21,15 @@ source_receipt_policy:
 models:
   embeddings:
     provider: ollama
-    model: nomic-embed-text
+    # Docker must reach the host's local Ollama service explicitly; localhost
+    # inside this container is not the Windows host. This workstation keeps
+    # snowflake-arctic-embed locally available for the private docs corpus.
+    base_url: http://host.docker.internal:11434
+    model: snowflake-arctic-embed:latest
   answer:
     provider: ollama
-    model: llama3
+    base_url: http://host.docker.internal:11434
+    model: gpt-oss:20b
 
 chunking:
   default:
