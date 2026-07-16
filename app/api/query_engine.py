@@ -20,6 +20,7 @@ from ..services.corpus_service import (
     validate_corpus_id,
     CorpusValidationError,
 )
+from ..policy import PolicyViolation, assert_corpus_model_policy, assert_provider_allowed, corpus_privacy
 from ..utils.logging import setup_logging
 from ..config.loader import load_config
 from ..config.schema import GlobalConfig
@@ -28,6 +29,7 @@ logger = setup_logging()
 
 # Default base URL for LLM providers (loaded from config when possible)
 DEFAULT_OLLAMA_URL = PROVIDER_DEFAULT_BASE_URLS["ollama"]
+DEFAULT_PROVIDER_BASE_URLS = PROVIDER_DEFAULT_BASE_URLS
 ALL_CORPORA_SENTINELS = {"__all__", "all", "*"}
 
 
@@ -152,12 +154,10 @@ class QueryEngine:
         Returns:
             LLM provider instance or None
         """
-        config_path = self._get_corpus_config_path(corpus_id)
-        if config_path:
+        meta = self._load_corpus_meta(corpus_id)
+        if meta:
+            self._assert_corpus_model_policy(meta)
             try:
-                with open(config_path) as f:
-                    meta = yaml.safe_load(f)
-
                 answer_config = meta.get("models", {}).get("answer")
                 if answer_config:
                     provider = answer_config.get("provider", "ollama")
@@ -173,6 +173,8 @@ class QueryEngine:
                     else:
                         api_key = None
                     return get_llm_provider(provider, base_url=base_url, model=model, api_key=api_key)
+            except PolicyViolation:
+                raise
             except Exception as e:
                 logger.warning(f"Failed to load corpus LLM config for {corpus_id}: {e}")
 
@@ -198,6 +200,8 @@ class QueryEngine:
 
     def _resolve_embedder(self, corpus_id: str) -> EmbeddingProvider:
         meta = self._load_corpus_meta(corpus_id)
+        if meta:
+            self._assert_corpus_model_policy(meta)
         embedding_config = meta.get("models", {}).get("embeddings")
         if not embedding_config:
             return self.embedder
@@ -243,6 +247,27 @@ class QueryEngine:
         self._embedder_cache[cache_key] = embedder
         return embedder
 
+    def _assert_corpus_model_policy(self, corpus_config: Dict[str, Any]) -> str:
+        default_embeddings = getattr(getattr(self.config, "models", None), "embeddings", None)
+        default_embedding_provider = default_embeddings.provider if default_embeddings else "ollama"
+        return assert_corpus_model_policy(
+            corpus_config,
+            default_embedding_provider=default_embedding_provider,
+            default_answer_provider=self.default_answer_provider,
+        )
+
+    def _query_includes_local_only(
+        self,
+        corpus_id: Optional[str],
+        candidate_corpora: list[str],
+    ) -> bool:
+        corpus_ids = candidate_corpora if self._is_all_corpora_query(corpus_id) else [corpus_id] if corpus_id else []
+        return any(
+            corpus_privacy(self._load_corpus_meta(candidate)) == "local_only"
+            for candidate in corpus_ids
+            if candidate
+        )
+
     def query(
         self,
         query_text: str,
@@ -281,6 +306,7 @@ class QueryEngine:
 
         # 1. Embed & Search
         hits = []
+        candidate_corpora: list[str] = []
         if all_corpora_query:
             try:
                 candidate_corpora = self._get_searchable_corpora()
@@ -355,9 +381,21 @@ class QueryEngine:
             text = meta.get('text', '')
             context_parts.append(f"[{source}]:\n{text}")
 
-        # 4. Resolve LLM provider
+        # 4. Resolve LLM provider. A local_only corpus is never allowed to
+        # send its query or retrieved context through a cloud answer route.
         llm = None
+        local_only_query = self._query_includes_local_only(corpus_id, candidate_corpora)
         if llm_model:
+            if local_only_query:
+                try:
+                    assert_provider_allowed("local_only", self.default_answer_provider, "answer")
+                except PolicyViolation as exc:
+                    return {
+                        "query": query_text,
+                        "hits": formatted_hits,
+                        "answer": f"Answer generation blocked by local_only policy: {exc}",
+                        "time": time.time() - start_time,
+                    }
             # Ad-hoc model override
             try:
                 llm = get_llm_provider(
@@ -371,9 +409,27 @@ class QueryEngine:
                 llm = self.default_llm
         elif corpus_id and not all_corpora_query:
             # Use corpus-specific config
-            llm = self._resolve_llm(corpus_id)
+            try:
+                llm = self._resolve_llm(corpus_id)
+            except PolicyViolation as exc:
+                return {
+                    "query": query_text,
+                    "hits": formatted_hits,
+                    "answer": f"Answer generation blocked by local_only policy: {exc}",
+                    "time": time.time() - start_time,
+                }
         else:
             # Use default
+            if local_only_query:
+                try:
+                    assert_provider_allowed("local_only", self.default_answer_provider, "answer")
+                except PolicyViolation as exc:
+                    return {
+                        "query": query_text,
+                        "hits": formatted_hits,
+                        "answer": f"Answer generation blocked by local_only policy: {exc}",
+                        "time": time.time() - start_time,
+                    }
             llm = self.default_llm
 
         # 4. Generate answer

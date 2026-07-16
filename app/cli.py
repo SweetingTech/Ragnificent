@@ -11,14 +11,15 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from .config.loader import load_config
+from .services.source_receipt_service import ensure_source_receipts_schema
 from .state.db import Database
 from .utils.logging import setup_logging
 
 logger = setup_logging()
 
 # Constants
-DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = 8008
+DEFAULT_HOST = os.getenv("API_HOST", "127.0.0.1")
+DEFAULT_PORT = int(os.getenv("API_PORT", "8008"))
 
 
 def cmd_serve(args):
@@ -45,6 +46,7 @@ def cmd_init_db(args):
     db = Database(db_path)
     schema_path = os.path.join(os.path.dirname(__file__), "state", "schema.sql")
     db.init_db(schema_path)
+    ensure_source_receipts_schema(db)
     logger.info("Database initialization complete.")
 
 

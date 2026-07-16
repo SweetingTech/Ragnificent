@@ -10,6 +10,7 @@ import os
 
 from ..providers.factory import PROVIDER_DEFAULT_BASE_URLS
 from ..utils.logging import setup_logging
+from ..policy import PolicyViolation, assert_provider_allowed, normalize_privacy
 
 logger = setup_logging()
 
@@ -203,6 +204,7 @@ class CorpusService:
         chunk_strategy: str = "pdf_sections",
         chunk_max_tokens: int = 700,
         chunk_overlap_tokens: int = 80,
+        privacy: str = "internal",
     ) -> Path:
         """
         Create a new corpus with directory structure and configuration.
@@ -221,6 +223,17 @@ class CorpusService:
             CorpusValidationError: If validation fails
         """
         validate_corpus_id(corpus_id)
+        try:
+            normalized_privacy = normalize_privacy(privacy)
+            assert_provider_allowed(normalized_privacy, llm_provider, "answer")
+            if normalized_privacy == "local_only" and not embedding_provider:
+                raise PolicyViolation(
+                    "local_only corpora require an explicit Ollama embedding provider and model"
+                )
+            if embedding_provider:
+                assert_provider_allowed(normalized_privacy, embedding_provider, "embedding")
+        except PolicyViolation as exc:
+            raise CorpusValidationError(str(exc)) from exc
 
         corpus_path = self.get_corpus_path(corpus_id)
         inbox_path = corpus_path / "inbox"
@@ -238,6 +251,7 @@ class CorpusService:
             "corpus_id": corpus_id,
             "description": safe_description,
             "source_path": safe_source_path,
+            "privacy": normalized_privacy,
             "retain_on_missing": True,
             "models": {
                 "answer": {

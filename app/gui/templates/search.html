@@ -37,10 +37,12 @@
         </p>
 
         <label style="display:block; margin-bottom:0.5rem;">Model</label>
-        <input type="text" name="llm_model" value="{{ default_model }}"
+        <input type="text" name="llm_model" value=""
                placeholder="e.g. llama3, gpt-4o-mini">
         <small style="color: var(--text-secondary); display:block; margin-bottom: 1rem;">
-            This uses the default answer provider from <a href="/gui/settings">Settings</a> (currently {{ default_answer_provider }}).
+            Leave this blank to use the configured answer model. Explicit model
+            overrides are disabled unless the service operator has allowlisted
+            them.
         </small>
 
         <div style="display: flex; gap: 1rem; margin-top: 1rem;">

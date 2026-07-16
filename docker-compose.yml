@@ -16,8 +16,10 @@ services:
       - ./config.docker.yaml:/app/config.yaml
       - ./models_catalog.yaml:/app/models_catalog.yaml:ro
       - ./embedding_presets.yaml:/app/embedding_presets.yaml:ro
-      # Optional: mount host document folders here and point source_path at the
-      # container-visible path, for example:
+      # Legacy local-administration workflow only: mount host document folders
+      # here and point a preconfigured corpus source_path at the
+      # container-visible path. New Agent Harness/Wiki.js intake uses the
+      # authenticated source-receipt root mapping instead.
       # - D:/Books:/imports:ro
     depends_on:
       - qdrant

@@ -18,6 +18,7 @@ from ...providers.ollama import OllamaLLM
 from ...providers.reranker import RerankProvider, get_rerank_provider
 from ..query_engine import QueryEngine
 from ...utils.logging import setup_logging
+from ...security import validate_query_model_override
 
 logger = setup_logging()
 
@@ -155,6 +156,8 @@ async def query_api(
     Returns:
         Query response with answer and source hits
     """
+    validate_query_model_override(request.llm_model)
+
     # Run the potentially blocking query in a thread pool
     result = await asyncio.to_thread(
         engine.query,
@@ -199,6 +202,8 @@ async def query_ui(
     Returns:
         HTML template response with search results
     """
+    validate_query_model_override(llm_model)
+
     # Run the potentially blocking query in a thread pool
     result = await asyncio.to_thread(
         engine.query,
