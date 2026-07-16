@@ -150,3 +150,33 @@ def test_query_route_preserves_repository_documentation_citations():
     assert response.json()["citations"] == [
         {"repository": "SweetingTech/Agent_Harness_Template", "path": "README.md"}
     ]
+
+
+def test_query_route_vector_only_preserves_a_null_answer():
+    class VectorOnlyEngine:
+        def __init__(self):
+            self.calls = []
+
+        def query(self, query_text, corpus_id=None, top_k=5, llm_model=None, generate_answer=True):
+            self.calls.append(generate_answer)
+            return {
+                "query": query_text,
+                "answer": None,
+                "hits": [{"id": "citation-only"}],
+                "citations": [],
+                "time": 0.01,
+            }
+
+    app = FastAPI()
+    app.include_router(query.router, prefix="/api")
+    engine = VectorOnlyEngine()
+    app.dependency_overrides[query.get_query_engine] = lambda: engine
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/query",
+            json={"query": "What owns Trombone?", "generate_answer": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] is None
+    assert engine.calls == [False]

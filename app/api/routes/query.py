@@ -174,12 +174,17 @@ async def query_api(
         request.generate_answer,
     )
 
-    # Use the actual answer from the engine (LLM-generated)
+    # Vector-only callers intentionally receive no synthesized answer. A
+    # friendly fallback here would make a caller believe an answer-model pass
+    # occurred, and it would defeat the deterministic internal-preflight mode.
     answer = result.get('answer')
-    if answer is None and result['hits']:
-        answer = f"Found {len(result['hits'])} relevant matches."
-    elif answer is None:
-        answer = "No relevant knowledge found (or no corpus selected)."
+    if request.generate_answer:
+        if answer is None and result['hits']:
+            answer = f"Found {len(result['hits'])} relevant matches."
+        elif answer is None:
+            answer = "No relevant knowledge found (or no corpus selected)."
+    else:
+        answer = None
 
     return QueryResponse(
         query=request.query,
