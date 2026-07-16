@@ -416,6 +416,20 @@ corpus after a receipt is created does not change that receipt's stored
 authority. The setting governs publication to the authenticated private Wiki;
 it does not alter provider/model locality or make any content public.
 
+### Voltron repository documentation lane
+
+`voltron-repository-docs` is a separate source-receipt-only corpus for the
+allowlisted README/docs snapshots produced by Agent Harness's documentation
+catalog. It does **not** trust a broad Voltron workspace path or use the legacy
+folder scan. Configure
+`RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` to the generated
+`documentation-snapshots` directory, install the exact corpus policy template,
+and submit one hash-verified `repository_documentation` receipt per snapshot.
+Queries return repo/path/commit/hash receipt citations without leaking local
+snapshot paths. See [docs/voltron-repository-docs.md](docs/voltron-repository-docs.md)
+and [docs/voltron-repository-docs.corpus.yaml](docs/voltron-repository-docs.corpus.yaml)
+for the deployment contract.
+
 ### Legacy API migration
 
 Existing `/api/corpora` and `/api/ingest/run` workflows remain temporarily

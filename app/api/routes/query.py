@@ -3,7 +3,7 @@ Query API routes for search and RAG functionality.
 """
 import asyncio
 from fastapi import APIRouter, Form, Request, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
 from fastapi.templating import Jinja2Templates
@@ -42,6 +42,9 @@ class QueryResponse(BaseModel):
     query: str
     answer: Optional[str] = None
     hits: List[Dict[str, Any]]
+    # Repository-docs results provide safe, pinning-aware citations here. Other
+    # corpora simply return an empty list rather than inventing provenance.
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
     time: Optional[float] = None
 
 
@@ -178,6 +181,7 @@ async def query_api(
         query=request.query,
         answer=answer,
         hits=result['hits'],
+        citations=result.get('citations', []),
         time=result.get('time')
     )
 
@@ -223,6 +227,7 @@ async def query_ui(
         "corpus_id": corpus_id,
         "answer": answer,
         "hits": hits,
+        "citations": result.get("citations", []),
         "time": result.get('time', 0)
     }
 

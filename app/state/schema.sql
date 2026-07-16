@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS source_receipts (
     locator_relative_path TEXT NOT NULL,
     content_sha256 TEXT NOT NULL,
     title TEXT,
+    -- Present only for the approved voltron-repository-docs receipt lane.
+    -- It stores repository/path/commit/hash citation provenance, never a local
+    -- source-root path or arbitrary caller metadata.
+    documentation_provenance_json TEXT,
     privacy TEXT NOT NULL,
     -- Server-computed at receipt creation from the administrator-owned corpus
     -- config. It is immutable so later corpus config changes cannot rewrite

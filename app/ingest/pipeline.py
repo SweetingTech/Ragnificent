@@ -2,7 +2,7 @@
 Document ingestion pipeline for processing and indexing documents.
 Handles file scanning, extraction, chunking, embedding, and storage.
 """
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, Mapping
 import os
 import glob
 import time
@@ -454,6 +454,7 @@ class IngestionPipeline:
         receipt_id: str,
         canonical_locator: str,
         expected_hash: str,
+        documentation_provenance: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         """Ingest one hash-verified file from the source-receipt boundary.
 
@@ -482,15 +483,30 @@ class IngestionPipeline:
         corpus = corpora[0]
         self._assert_corpus_model_policy(corpus["config"])
         embedder = self._get_embedder_for_corpus(corpus["config"])
+        receipt_context: Dict[str, str] = {
+            "source_receipt_id": receipt_id,
+            "source_receipt_locator": canonical_locator,
+            # Do not return the machine-local snapshot path in a receipt-backed
+            # vector payload. The immutable receipt locator is the safe source
+            # reference for all receipt types.
+            "source": canonical_locator,
+        }
+        if documentation_provenance:
+            receipt_context.update(
+                {
+                    "citation_repository": str(documentation_provenance["repository"]),
+                    "citation_path": str(documentation_provenance["path"]),
+                    "citation_git_commit": str(documentation_provenance["git_commit"]),
+                    "citation_content_sha256": str(documentation_provenance["content_sha256"]),
+                }
+            )
+
         result = self._process_file(
             source,
             corpus_id,
             corpus["config"],
             embedder,
-            receipt_context={
-                "source_receipt_id": receipt_id,
-                "source_receipt_locator": canonical_locator,
-            },
+            receipt_context=receipt_context,
         )
         return {
             "status": result,

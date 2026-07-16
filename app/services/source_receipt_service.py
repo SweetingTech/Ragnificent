@@ -19,11 +19,14 @@ from typing import Any, Mapping
 from ..config.schema import GlobalConfig
 from ..policy import (
     PolicyViolation,
+    REPOSITORY_DOCS_ROOT_ID,
     WIKI_PUBLICATION_LOCAL_ONLY,
     WIKI_PUBLICATION_PRIVATE_WIKI_ALLOWED,
+    assert_repository_documentation_receipt_policy,
     assert_corpus_model_policy,
     corpus_privacy,
     corpus_wiki_publication,
+    normalize_repository_documentation_provenance,
     normalize_privacy,
 )
 from ..services.corpus_service import CorpusService
@@ -32,6 +35,8 @@ from ..utils.hashing import hash_file
 
 
 ROOT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+REPOSITORY_DOCS_ROOT_ENV = "RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT"
+REPOSITORY_DOCS_SNAPSHOT_DIRECTORY = "documentation-snapshots"
 
 
 class SourceReceiptError(ValueError):
@@ -47,6 +52,29 @@ class ResolvedSourceLocator:
     root_id: str
     relative_path: str
     path: Path
+
+
+def _configured_repository_docs_root() -> Path:
+    """Return the one explicit generated snapshot root for repository docs.
+
+    It is deliberately not derived from the workspace root or a broad
+    ``D:\\Jazzy`` mount.  The documentation catalog writes selected, redacted
+    README/docs snapshots here; the source-receipt boundary may read only an
+    exact file underneath this directory.
+    """
+    raw = os.getenv(REPOSITORY_DOCS_ROOT_ENV, "").strip()
+    if not raw:
+        raise SourceReceiptError(
+            "Repository documentation intake is disabled until "
+            f"{REPOSITORY_DOCS_ROOT_ENV} is configured."
+        )
+    root = Path(raw).expanduser().resolve()
+    if root.name.lower() != REPOSITORY_DOCS_SNAPSHOT_DIRECTORY:
+        raise SourceReceiptError(
+            f"{REPOSITORY_DOCS_ROOT_ENV} must point to the generated "
+            f"{REPOSITORY_DOCS_SNAPSHOT_DIRECTORY} directory, not a broader workspace root."
+        )
+    return root
 
 
 def _safe_root_mapping(config: GlobalConfig) -> dict[str, Path]:
@@ -74,6 +102,20 @@ def _safe_root_mapping(config: GlobalConfig) -> dict[str, Path]:
         if not isinstance(value, str) or not value.strip():
             raise SourceReceiptError(f"Configured source root '{root_id}' is empty.")
         roots[root_id] = Path(value).expanduser().resolve()
+
+    # The repository-documentation snapshot root is a dedicated opt-in.  It is
+    # never a default and it cannot silently be remapped through the generic
+    # trusted-root JSON to a broader workspace path.
+    configured_docs_root = os.getenv(REPOSITORY_DOCS_ROOT_ENV, "").strip()
+    if configured_docs_root:
+        docs_root = _configured_repository_docs_root()
+        configured_mapping = roots.get(REPOSITORY_DOCS_ROOT_ID)
+        if configured_mapping is not None and configured_mapping != docs_root:
+            raise SourceReceiptError(
+                "The repository documentation trusted-root mapping does not match "
+                f"{REPOSITORY_DOCS_ROOT_ENV}."
+            )
+        roots[REPOSITORY_DOCS_ROOT_ID] = docs_root
     return roots
 
 
@@ -158,6 +200,16 @@ def ensure_source_receipts_schema(db: Database) -> None:
                 CHECK (wiki_publication IN ('private_wiki_allowed', 'local_only'))
                 """
             )
+        if "documentation_provenance_json" not in columns:
+            # A nullable JSON bundle is intentionally additive.  Legacy and
+            # non-documentation receipts retain no inferred provenance, while
+            # new repository-docs receipts store the immutable citation fields.
+            conn.execute(
+                """
+                ALTER TABLE source_receipts
+                ADD COLUMN documentation_provenance_json TEXT
+                """
+            )
         conn.execute(
             """
             UPDATE source_receipts
@@ -193,6 +245,21 @@ def _row_to_record(row: Any) -> dict[str, Any]:
         WIKI_PUBLICATION_LOCAL_ONLY,
     }:
         wiki_publication = WIKI_PUBLICATION_LOCAL_ONLY
+    documentation_provenance = None
+    try:
+        provenance_raw = row["documentation_provenance_json"]
+    except (IndexError, KeyError):
+        # Old rows predate the dedicated documentation lane.  Do not invent
+        # citation provenance for them during a compatibility read.
+        provenance_raw = None
+    if provenance_raw:
+        try:
+            parsed_provenance = json.loads(provenance_raw)
+        except (TypeError, json.JSONDecodeError):
+            parsed_provenance = None
+        if isinstance(parsed_provenance, dict):
+            documentation_provenance = parsed_provenance
+
     return {
         "receipt_id": row["receipt_id"],
         "canonical_locator": _canonical_locator(row["receipt_id"]),
@@ -207,6 +274,7 @@ def _row_to_record(row: Any) -> dict[str, Any]:
         },
         "content_sha256": row["content_sha256"],
         "title": row["title"],
+        "documentation_provenance": documentation_provenance,
         "privacy": row["privacy"],
         "wiki_publication": wiki_publication,
         "correlation_id": row["correlation_id"],
@@ -247,9 +315,57 @@ class SourceReceiptService:
         except PolicyViolation as exc:
             raise SourceReceiptError(str(exc)) from exc
 
+    def _validate_source_contract(
+        self,
+        *,
+        corpus_id: str,
+        corpus_config: Mapping[str, Any],
+        payload: Mapping[str, Any],
+        content_sha256: str,
+    ) -> dict[str, str] | None:
+        """Apply the narrow repository-docs contract before resolving a file."""
+        locator_payload = payload.get("source_locator")
+        if not isinstance(locator_payload, Mapping):
+            raise SourceReceiptError("source_locator is required.")
+        root_id = str(locator_payload.get("root_id") or "")
+        source_kind = str(payload.get("source_kind") or "")
+        source_system = str(payload.get("source_system") or "")
+        try:
+            is_repository_docs = assert_repository_documentation_receipt_policy(
+                corpus_id=corpus_id,
+                corpus_config=corpus_config,
+                root_id=root_id,
+                source_kind=source_kind,
+                source_system=source_system,
+            )
+            if not is_repository_docs:
+                if payload.get("documentation_provenance") is not None:
+                    raise PolicyViolation(
+                        "documentation_provenance is reserved for the voltron-repository-docs corpus."
+                    )
+                return None
+            # Fail before source resolution when the dedicated root has not
+            # been explicitly configured.  This avoids a misleading generic
+            # "unknown root" error and prevents a broad workspace fallback.
+            _configured_repository_docs_root()
+            return normalize_repository_documentation_provenance(
+                payload.get("documentation_provenance"),
+                content_sha256=content_sha256,
+            )
+        except PolicyViolation as exc:
+            raise SourceReceiptError(str(exc)) from exc
+
     def create_receipt(self, payload: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
         """Validate a source and create an idempotent immutable receipt."""
         corpus_id = str(payload["corpus_id"])
+        corpus_config = self._corpus_config(corpus_id)
+        supplied_hash = str(payload["content_sha256"]).lower()
+        documentation_provenance = self._validate_source_contract(
+            corpus_id=corpus_id,
+            corpus_config=corpus_config,
+            payload=payload,
+            content_sha256=supplied_hash,
+        )
         locator_payload = payload["source_locator"]
         if not isinstance(locator_payload, Mapping):
             raise SourceReceiptError("source_locator is required.")
@@ -259,11 +375,9 @@ class SourceReceiptService:
             relative_path=str(locator_payload["relative_path"]),
         )
         observed_hash = hash_file(str(locator.path))
-        supplied_hash = str(payload["content_sha256"]).lower()
         if observed_hash != supplied_hash:
             raise SourceReceiptError("The source content hash does not match the submitted receipt.")
 
-        corpus_config = self._corpus_config(corpus_id)
         model_policy = self._validate_privacy(str(payload.get("privacy") or "internal"), corpus_config)
         wiki_publication = corpus_wiki_publication(corpus_config)
         workspace_id = str(payload["workspace_id"])
@@ -282,6 +396,7 @@ class SourceReceiptService:
                     existing_record["source_locator"]["relative_path"],
                     existing_record["content_sha256"],
                     existing_record["privacy"],
+                    existing_record.get("documentation_provenance"),
                 )
                 requested_values = (
                     corpus_id,
@@ -289,6 +404,7 @@ class SourceReceiptService:
                     locator.relative_path,
                     supplied_hash,
                     model_policy["privacy"],
+                    documentation_provenance,
                 )
                 if existing_values != requested_values:
                     raise SourceReceiptError(
@@ -303,9 +419,10 @@ class SourceReceiptService:
                 INSERT INTO source_receipts (
                     receipt_id, workspace_id, corpus_id, source_kind, source_system,
                     source_record_id, locator_root_id, locator_relative_path,
-                    content_sha256, title, privacy, wiki_publication, correlation_id, idempotency_key,
+                    content_sha256, title, documentation_provenance_json, privacy, wiki_publication,
+                    correlation_id, idempotency_key,
                     status, indexed_file_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)
                 """,
                 (
                     receipt_id,
@@ -318,6 +435,7 @@ class SourceReceiptService:
                     locator.relative_path,
                     supplied_hash,
                     str(payload.get("title") or "") or None,
+                    json.dumps(documentation_provenance, sort_keys=True) if documentation_provenance else None,
                     model_policy["privacy"],
                     wiki_publication,
                     str(payload.get("correlation_id") or "") or None,

@@ -268,6 +268,61 @@ class QueryEngine:
             if candidate
         )
 
+    @staticmethod
+    def _repository_documentation_citations(
+        hits: list[Dict[str, Any]],
+    ) -> list[Dict[str, Any]]:
+        """Extract stable, safe citations from repository-docs vector payloads.
+
+        The generated snapshot's absolute path is intentionally not a citation.
+        A caller gets the canonical receipt locator plus the source repository,
+        source-relative document path, pinned commit, and content hash instead.
+        """
+        citations: list[Dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str, str, str]] = set()
+        for hit in hits:
+            payload = hit.get("payload", {})
+            repository = payload.get("citation_repository")
+            path = payload.get("citation_path")
+            git_commit = payload.get("citation_git_commit")
+            content_sha256 = payload.get("citation_content_sha256")
+            receipt_id = payload.get("source_receipt_id")
+            canonical_locator = payload.get("source_receipt_locator")
+            if not all(
+                isinstance(value, str) and value
+                for value in (
+                    repository,
+                    path,
+                    git_commit,
+                    content_sha256,
+                    receipt_id,
+                    canonical_locator,
+                )
+            ):
+                continue
+            key = (
+                repository,
+                path,
+                git_commit,
+                content_sha256,
+                receipt_id,
+                canonical_locator,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            citations.append(
+                {
+                    "repository": repository,
+                    "path": path,
+                    "git_commit": git_commit,
+                    "content_sha256": content_sha256,
+                    "source_receipt_id": receipt_id,
+                    "canonical_locator": canonical_locator,
+                }
+            )
+        return citations
+
     def query(
         self,
         query_text: str,
@@ -367,6 +422,8 @@ class QueryEngine:
         else:
             formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)[:top_k]
 
+        citations = self._repository_documentation_citations(formatted_hits)
+
         # 3. Build context
         context_parts = []
         for hit in formatted_hits:
@@ -374,7 +431,15 @@ class QueryEngine:
             corpus_name = meta.get('corpus_id')
             file_name = meta.get('file_name', 'unknown')
             page = meta.get('page', meta.get('chunk_index', '?'))
-            if corpus_name:
+            repository = meta.get("citation_repository")
+            repository_path = meta.get("citation_path")
+            git_commit = meta.get("citation_git_commit")
+            if repository and repository_path and git_commit:
+                source = (
+                    f"Repository: {repository} | Path: {repository_path} | "
+                    f"Commit: {git_commit} (Section {page})"
+                )
+            elif corpus_name:
                 source = f"Corpus: {corpus_name} | File: {file_name} (Section {page})"
             else:
                 source = f"File: {file_name} (Section {page})"
@@ -462,6 +527,7 @@ class QueryEngine:
         return {
             "query": query_text,
             "hits": formatted_hits,
+            "citations": citations,
             "answer": answer,
             "time": time.time() - start_time
         }

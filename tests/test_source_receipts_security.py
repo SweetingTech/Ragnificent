@@ -10,6 +10,7 @@ from starlette.requests import Request
 
 from app.api.routes import corpora, ingest, source_receipts
 from app.config.schema import GlobalConfig
+from app.ingest.pipeline import IngestionPipeline
 from app.security import (
     configured_cors_origins,
     require_legacy_mutation_access,
@@ -92,6 +93,65 @@ def _source_file(config: GlobalConfig) -> tuple[Path, str]:
     path.parent.mkdir()
     path.write_text("# Safe source\n\nEvidence content.", encoding="utf-8")
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_repository_docs_corpus(config: GlobalConfig):
+    corpus_path = Path(config.library_root) / "corpora" / "voltron-repository-docs"
+    corpus_path.mkdir(parents=True, exist_ok=True)
+    (corpus_path / "corpus.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "corpus_id": "voltron-repository-docs",
+                "description": "approved repository docs",
+                "privacy": "internal",
+                "wiki_publication": "private_wiki_allowed",
+                "source_receipt_policy": {
+                    "profile": "voltron_repository_docs_v1",
+                    "trusted_root_id": "voltron_repository_docs",
+                    "source_kind": "repository_documentation",
+                    "source_system": "voltron_documentation_catalog",
+                },
+                "models": {
+                    "embeddings": {"provider": "ollama", "model": "nomic-embed-text"},
+                    "answer": {"provider": "ollama", "model": "llama3"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _documentation_snapshot(tmp_path: Path) -> tuple[Path, Path, str]:
+    root = tmp_path / "documentation-snapshots"
+    path = root / "agent-harness" / "README.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("# Agent Harness\n\nCanonical internal documentation.", encoding="utf-8")
+    return root, path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _repository_docs_payload(content_hash: str, **overrides):
+    payload = {
+        "workspace_id": "voltron",
+        "corpus_id": "voltron-repository-docs",
+        "source_kind": "repository_documentation",
+        "source_system": "voltron_documentation_catalog",
+        "source_record_id": "SweetingTech/Agent_Harness_Template:README.md",
+        "source_locator": {
+            "root_id": "voltron_repository_docs",
+            "relative_path": "agent-harness/README.md",
+        },
+        "content_sha256": content_hash,
+        "title": "Agent Harness README",
+        "documentation_provenance": {
+            "repository": "SweetingTech/Agent_Harness_Template",
+            "path": "README.md",
+            "git_commit": "a" * 40,
+        },
+        "privacy": "internal",
+        "idempotency_key": f"repository-docs:agent-harness:{content_hash}",
+    }
+    payload.update(overrides)
+    return payload
 
 
 def _app(config: GlobalConfig, db: Database) -> FastAPI:
@@ -342,6 +402,167 @@ def test_source_receipt_ingests_only_the_receipted_file(tmp_path, monkeypatch):
     assert len(pipeline.calls) == 1
     assert pipeline.calls[0]["receipt_id"] == receipt_id
     assert pipeline.calls[0]["canonical_locator"].endswith(receipt_id)
+
+
+def test_repository_docs_receipts_require_the_narrow_snapshot_root_and_preserve_provenance(
+    tmp_path,
+    monkeypatch,
+):
+    config = _config(tmp_path)
+    _write_repository_docs_corpus(config)
+    snapshot_root, _, content_hash = _documentation_snapshot(tmp_path)
+    db = _database(config)
+    headers = {"X-Ragnificent-Token": "receipt-test-token"}
+    monkeypatch.setenv("RAGNIFICENT_INTERNAL_TOKEN", "receipt-test-token")
+
+    # A docs corpus fails closed before any source path is resolved when the
+    # dedicated generated-snapshot root has not been configured.
+    with TestClient(_app(config, db)) as client:
+        unset = client.post(
+            "/api/source-receipts",
+            json=_repository_docs_payload(content_hash),
+            headers=headers,
+        )
+    assert unset.status_code == 409
+    assert "RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT" in unset.json()["detail"]
+
+    monkeypatch.setenv("RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT", str(snapshot_root))
+    app = _app(config, db)
+
+    class Pipeline:
+        calls = []
+
+        def ingest_receipted_file(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "status": "processed",
+                "file_hash": kwargs["expected_hash"],
+                "source_receipt_id": kwargs["receipt_id"],
+            }
+
+    pipeline = Pipeline()
+    app.dependency_overrides[source_receipts.get_pipeline] = lambda: pipeline
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/source-receipts",
+            json=_repository_docs_payload(content_hash),
+            headers=headers,
+        )
+        receipt_id = created.json()["receipt_id"]
+        ingested = client.post(f"/api/source-receipts/{receipt_id}/ingest", headers=headers)
+
+    assert created.status_code == 201
+    assert created.json()["documentation_provenance"] == {
+        "repository": "SweetingTech/Agent_Harness_Template",
+        "path": "README.md",
+        "git_commit": "a" * 40,
+        "content_sha256": content_hash,
+    }
+    assert ingested.status_code == 200
+    assert pipeline.calls[0]["documentation_provenance"] == created.json()["documentation_provenance"]
+
+    # A generic trusted-root setting cannot remap the docs root to a broader
+    # workspace path; it must resolve to the exact dedicated snapshot root.
+    monkeypatch.setenv(
+        "RAGNIFICENT_TRUSTED_SOURCE_ROOTS",
+        '{"voltron_repository_docs": "' + str(tmp_path).replace("\\", "\\\\") + '"}',
+    )
+    with TestClient(_app(config, db)) as client:
+        mismatched = client.post(
+            "/api/source-receipts",
+            json=_repository_docs_payload(content_hash, idempotency_key="repository-docs:mismatch"),
+            headers=headers,
+        )
+    assert mismatched.status_code == 409
+    assert "does not match" in mismatched.json()["detail"]
+
+
+def test_repository_docs_receipt_rejects_non_markdown_or_unpinned_provenance(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _write_repository_docs_corpus(config)
+    snapshot_root, _, content_hash = _documentation_snapshot(tmp_path)
+    db = _database(config)
+    monkeypatch.setenv("RAGNIFICENT_INTERNAL_TOKEN", "receipt-test-token")
+    monkeypatch.setenv("RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT", str(snapshot_root))
+    headers = {"X-Ragnificent-Token": "receipt-test-token"}
+
+    with TestClient(_app(config, db)) as client:
+        non_markdown = client.post(
+            "/api/source-receipts",
+            json=_repository_docs_payload(
+                content_hash,
+                documentation_provenance={
+                    "repository": "SweetingTech/Agent_Harness_Template",
+                    "path": "scripts/bootstrap.ps1",
+                    "git_commit": "a" * 40,
+                },
+            ),
+            headers=headers,
+        )
+        short_commit = client.post(
+            "/api/source-receipts",
+            json=_repository_docs_payload(
+                content_hash,
+                documentation_provenance={
+                    "repository": "SweetingTech/Agent_Harness_Template",
+                    "path": "README.md",
+                    "git_commit": "abc1234",
+                },
+                idempotency_key="repository-docs:short-commit",
+            ),
+            headers=headers,
+        )
+
+    assert non_markdown.status_code == 409
+    assert "relative Markdown path" in non_markdown.json()["detail"]
+    # Pydantic rejects a non-full commit at the route boundary before it can
+    # become provenance, while the service remains defensive for direct calls.
+    assert short_commit.status_code == 422
+
+
+def test_receipted_pipeline_maps_repository_provenance_to_safe_vector_metadata(tmp_path):
+    source = tmp_path / "README.md"
+    source.write_text("# Documentation", encoding="utf-8")
+    content_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    observed = {}
+
+    # The receipt method is deliberately isolated from constructor-heavy OCR
+    # setup. Stub only its collaborators to assert the metadata forwarded into
+    # _process_file, where vectors are built.
+    pipeline = object.__new__(IngestionPipeline)
+    pipeline._get_corpora = lambda corpus_id: [{"config": {}}]
+    pipeline._assert_corpus_model_policy = lambda corpus_config: None
+    pipeline._get_embedder_for_corpus = lambda corpus_config: object()
+
+    def process(file_path, corpus_id, corpus_config, embedder, run_logger=None, receipt_context=None):
+        observed["receipt_context"] = receipt_context
+        return "processed"
+
+    pipeline._process_file = process
+    result = pipeline.ingest_receipted_file(
+        corpus_id="voltron-repository-docs",
+        file_path=str(source),
+        receipt_id="receipt-123",
+        canonical_locator="ragnificent://source-receipts/receipt-123",
+        expected_hash=content_hash,
+        documentation_provenance={
+            "repository": "SweetingTech/Agent_Harness_Template",
+            "path": "README.md",
+            "git_commit": "a" * 40,
+            "content_sha256": content_hash,
+        },
+    )
+
+    assert result["status"] == "processed"
+    assert observed["receipt_context"] == {
+        "source_receipt_id": "receipt-123",
+        "source_receipt_locator": "ragnificent://source-receipts/receipt-123",
+        "source": "ragnificent://source-receipts/receipt-123",
+        "citation_repository": "SweetingTech/Agent_Harness_Template",
+        "citation_path": "README.md",
+        "citation_git_commit": "a" * 40,
+        "citation_content_sha256": content_hash,
+    }
 
 
 def test_strict_legacy_mode_requires_token_but_staged_loopback_still_works(tmp_path, monkeypatch):

@@ -1,0 +1,33 @@
+# Deployment template only. Copy this file to the ignored runtime location:
+# rag_library/corpora/voltron-repository-docs/corpus.yaml
+#
+# This corpus is source-receipt-only. Do not add a broad source_path or run a
+# legacy folder scan against D:\Jazzy; Agent Harness writes selected Markdown
+# snapshots and requests each exact-file ingest through the authenticated API.
+corpus_id: voltron-repository-docs
+description: Approved Voltron README and maintained documentation snapshots
+privacy: internal
+wiki_publication: private_wiki_allowed
+retain_on_missing: true
+
+source_receipt_policy:
+  profile: voltron_repository_docs_v1
+  trusted_root_id: voltron_repository_docs
+  source_kind: repository_documentation
+  source_system: voltron_documentation_catalog
+
+# Use reviewed local model settings unless the deployment has separately
+# approved an internal/restricted alternative.
+models:
+  embeddings:
+    provider: ollama
+    model: nomic-embed-text
+  answer:
+    provider: ollama
+    model: llama3
+
+chunking:
+  default:
+    strategy: heading_then_paragraph
+    max_tokens: 700
+    overlap_tokens: 100
