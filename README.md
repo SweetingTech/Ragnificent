@@ -421,10 +421,12 @@ it does not alter provider/model locality or make any content public.
 `voltron-repository-docs` is a separate source-receipt-only corpus for the
 allowlisted README/docs snapshots produced by Agent Harness's documentation
 catalog. It does **not** trust a broad Voltron workspace path or use the legacy
-folder scan. Configure
-`RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` to the generated
-`documentation-snapshots` directory, install the exact corpus policy template,
-and submit one hash-verified `repository_documentation` receipt per snapshot.
+folder scan. Docker Compose mounts the host-generated
+`../Agent_Harness_Template/data/runtime/wiki/documentation-snapshots` directory
+read-only at `/app/voltron-documentation-snapshots`; configure
+`RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` to that **container-visible** path,
+install the exact corpus policy template, and submit one hash-verified
+`repository_documentation` receipt per snapshot.
 Queries return repo/path/commit/hash receipt citations without leaking local
 snapshot paths. See [docs/voltron-repository-docs.md](docs/voltron-repository-docs.md)
 and [docs/voltron-repository-docs.corpus.yaml](docs/voltron-repository-docs.corpus.yaml)
@@ -505,6 +507,7 @@ boundary rather than relying on browser CORS.
 | `RAGNIFICENT_INTERNAL_TOKEN` | Required token for `/api/source-receipts`; also protects legacy mutations in strict mode |
 | `RAGNIFICENT_REQUIRE_INTERNAL_AUTH` | Set `true` only after existing API callers send `X-Ragnificent-Token` |
 | `RAGNIFICENT_TRUSTED_SOURCE_ROOTS` | Optional JSON map of logical root IDs to server paths for source receipts |
+| `RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` | Docker-container path `/app/voltron-documentation-snapshots` for the read-only Agent Harness documentation snapshot mount |
 | `RAGNIFICENT_CORS_ORIGINS` | Explicit comma-separated browser origin allowlist; wildcard values are ignored |
 | `RAGNIFICENT_ALLOWED_QUERY_MODEL_OVERRIDES` | Explicit model-ID allowlist for HTTP `llm_model` overrides; empty disables overrides |
 | `QDRANT_URL` | Qdrant connection URL |

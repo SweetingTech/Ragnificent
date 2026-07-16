@@ -16,6 +16,9 @@ services:
       - ./config.docker.yaml:/app/config.yaml
       - ./models_catalog.yaml:/app/models_catalog.yaml:ro
       - ./embedding_presets.yaml:/app/embedding_presets.yaml:ro
+      # Deliberately narrow read-only projection from Agent Harness. The
+      # receipt API is never given a broad D:\Jazzy workspace mount.
+      - ../Agent_Harness_Template/data/runtime/wiki/documentation-snapshots:/app/voltron-documentation-snapshots:ro
       # Legacy local-administration workflow only: mount host document folders
       # here and point a preconfigured corpus source_path at the
       # container-visible path. New Agent Harness/Wiki.js intake uses the

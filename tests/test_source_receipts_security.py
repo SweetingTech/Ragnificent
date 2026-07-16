@@ -122,7 +122,9 @@ def _write_repository_docs_corpus(config: GlobalConfig):
 
 
 def _documentation_snapshot(tmp_path: Path) -> tuple[Path, Path, str]:
-    root = tmp_path / "documentation-snapshots"
+    # Docker exposes the host-generated snapshot at this exact narrow
+    # container-directory name, not at the broader workspace path.
+    root = tmp_path / "voltron-documentation-snapshots"
     path = root / "agent-harness" / "README.md"
     path.parent.mkdir(parents=True)
     path.write_text("# Agent Harness\n\nCanonical internal documentation.", encoding="utf-8")
@@ -414,6 +416,7 @@ def test_repository_docs_receipts_require_the_narrow_snapshot_root_and_preserve_
     db = _database(config)
     headers = {"X-Ragnificent-Token": "receipt-test-token"}
     monkeypatch.setenv("RAGNIFICENT_INTERNAL_TOKEN", "receipt-test-token")
+    monkeypatch.delenv("RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT", raising=False)
 
     # A docs corpus fails closed before any source path is resolved when the
     # dedicated generated-snapshot root has not been configured.

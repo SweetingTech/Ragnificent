@@ -36,7 +36,7 @@ from ..utils.hashing import hash_file
 
 ROOT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 REPOSITORY_DOCS_ROOT_ENV = "RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT"
-REPOSITORY_DOCS_SNAPSHOT_DIRECTORY = "documentation-snapshots"
+REPOSITORY_DOCS_SNAPSHOT_DIRECTORY = "voltron-documentation-snapshots"
 
 
 class SourceReceiptError(ValueError):
@@ -58,9 +58,9 @@ def _configured_repository_docs_root() -> Path:
     """Return the one explicit generated snapshot root for repository docs.
 
     It is deliberately not derived from the workspace root or a broad
-    ``D:\\Jazzy`` mount.  The documentation catalog writes selected, redacted
-    README/docs snapshots here; the source-receipt boundary may read only an
-    exact file underneath this directory.
+    ``D:\\Jazzy`` mount. Docker bind-mounts the documentation catalog's
+    selected, redacted README/docs snapshots to this container-visible path;
+    the source-receipt boundary may read only an exact file underneath it.
     """
     raw = os.getenv(REPOSITORY_DOCS_ROOT_ENV, "").strip()
     if not raw:

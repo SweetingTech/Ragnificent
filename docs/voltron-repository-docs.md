@@ -20,16 +20,24 @@ index, and Wiki page are derived views; none may replace the source Git file.
 1. Copy [voltron-repository-docs.corpus.yaml](voltron-repository-docs.corpus.yaml)
    to the ignored runtime path
    `rag_library/corpora/voltron-repository-docs/corpus.yaml`.
-2. Configure the non-secret snapshot root:
+2. Docker Compose mounts the host snapshot directory into the container
+   read-only:
 
    ```text
-   RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT=D:/Jazzy/Agent_Harness_Template/data/runtime/wiki/documentation-snapshots
+   host: D:/Jazzy/Agent_Harness_Template/data/runtime/wiki/documentation-snapshots
+     -> container: /app/voltron-documentation-snapshots:ro
    ```
 
-   The value must name the generated `documentation-snapshots` directory. The
-   receipt API rejects an unset value, `D:/Jazzy`, another broad workspace
-   root, a mismatched `RAGNIFICENT_TRUSTED_SOURCE_ROOTS` mapping, traversal, or
-   a file outside that directory.
+   Configure the **container-visible** path in Ragnificent's runtime `.env`:
+
+   ```text
+   RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT=/app/voltron-documentation-snapshots
+   ```
+
+   Do not configure the Windows host path as the service value. The receipt API
+   rejects an unset value, `D:/Jazzy`, another broad workspace root, a
+   mismatched `RAGNIFICENT_TRUSTED_SOURCE_ROOTS` mapping, traversal, or a file
+   outside this narrow mounted directory.
 3. Keep `RAGNIFICENT_INTERNAL_TOKEN` configured. The documentation catalog
    sends it only as `X-Ragnificent-Token`; do not put its value in a snapshot,
    corpus configuration, Wiki page, or source receipt.
