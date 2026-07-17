@@ -83,6 +83,7 @@ tests/*
 !tests/test_source_receipts_security.py
 !tests/test_query_route_policy.py
 !tests/test_local_only_policy.py
+!tests/test_knowledge_trust.py
 changelog.md
 20260129_Changelog.md
 

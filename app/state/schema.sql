@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS source_receipts (
     -- historical Wiki.js publication authority.
     wiki_publication TEXT NOT NULL DEFAULT 'local_only'
         CHECK (wiki_publication IN ('private_wiki_allowed', 'local_only')),
+    -- New receipts receive only a server-derived, non-privileged class.
+    -- POR/validated promotion requires a separately verified redacted
+    -- experiment attestation through SourceReceiptService, never a request
+    -- body field.
+    knowledge_class TEXT NOT NULL DEFAULT 'unverified'
+        CHECK (knowledge_class IN (
+            'por', 'validated_lesson', 'operational_evidence',
+            'active_experiment', 'promoted_experiment',
+            'rejected_experiment', 'historical_document', 'unverified'
+        )),
+    -- Compact signed outcome metadata only; never private test cases,
+    -- prompts, answers, tool logs, or transcripts.
+    experiment_provenance_json TEXT,
     correlation_id TEXT,
     idempotency_key TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'received', -- received, ingested, failed

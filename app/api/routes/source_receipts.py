@@ -64,8 +64,10 @@ class DocumentationProvenanceResponse(DocumentationProvenanceRequest):
 
 
 class SourceReceiptCreateRequest(BaseModel):
-    # ``wiki_publication`` is intentionally absent and unknown fields are
-    # rejected: publication authority is computed from trusted corpus config.
+    # ``wiki_publication``, ``knowledge_class``, and experiment provenance are
+    # intentionally absent and unknown fields are rejected. Publication and
+    # trust are computed by server policy; a caller cannot self-upgrade a
+    # source to POR or a validated lesson.
     model_config = ConfigDict(extra="forbid")
     workspace_id: Annotated[str, Field(pattern=_SIMPLE_ID)]
     corpus_id: Annotated[str, Field(pattern=_SIMPLE_ID)]
@@ -96,6 +98,17 @@ class SourceReceiptResponse(BaseModel):
     documentation_provenance: Optional[DocumentationProvenanceResponse] = None
     privacy: str
     wiki_publication: Literal["private_wiki_allowed", "local_only"]
+    knowledge_class: Literal[
+        "por",
+        "validated_lesson",
+        "operational_evidence",
+        "active_experiment",
+        "promoted_experiment",
+        "rejected_experiment",
+        "historical_document",
+        "unverified",
+    ]
+    experiment_provenance: Optional[dict[str, Any]] = None
     correlation_id: Optional[str] = None
     idempotency_key: str
     status: str
@@ -170,6 +183,8 @@ def ingest_source_receipt(
             canonical_locator=receipt["canonical_locator"],
             expected_hash=receipt["content_sha256"],
             documentation_provenance=receipt.get("documentation_provenance"),
+            knowledge_class=receipt.get("knowledge_class", "unverified"),
+            experiment_provenance=receipt.get("experiment_provenance"),
         )
         # The pipeline returns a structured outcome instead of raising for
         # expected extraction/embedding failures. A receipt is only

@@ -619,6 +619,7 @@ def test_receipted_pipeline_maps_repository_provenance_to_safe_vector_metadata(t
         "source_receipt_id": "receipt-123",
         "source_receipt_locator": "ragnificent://source-receipts/receipt-123",
         "source": "ragnificent://source-receipts/receipt-123",
+        "knowledge_class": "unverified",
         "citation_repository": "SweetingTech/Agent_Harness_Template",
         "citation_path": "README.md",
         "citation_git_commit": "a" * 40,

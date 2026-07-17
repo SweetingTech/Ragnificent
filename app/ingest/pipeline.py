@@ -455,6 +455,8 @@ class IngestionPipeline:
         canonical_locator: str,
         expected_hash: str,
         documentation_provenance: Optional[Mapping[str, str]] = None,
+        knowledge_class: str = "unverified",
+        experiment_provenance: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Ingest one hash-verified file from the source-receipt boundary.
 
@@ -483,13 +485,18 @@ class IngestionPipeline:
         corpus = corpora[0]
         self._assert_corpus_model_policy(corpus["config"])
         embedder = self._get_embedder_for_corpus(corpus["config"])
-        receipt_context: Dict[str, str] = {
+        from ..knowledge_trust import normalize_knowledge_class
+
+        receipt_context: Dict[str, Any] = {
             "source_receipt_id": receipt_id,
             "source_receipt_locator": canonical_locator,
             # Do not return the machine-local snapshot path in a receipt-backed
             # vector payload. The immutable receipt locator is the safe source
             # reference for all receipt types.
             "source": canonical_locator,
+            # The receipt service, not a caller-provided ingest payload,
+            # derives this class. It lets retrieval apply stable trust policy.
+            "knowledge_class": normalize_knowledge_class(knowledge_class),
         }
         if documentation_provenance:
             receipt_context.update(
@@ -499,6 +506,18 @@ class IngestionPipeline:
                     "citation_git_commit": str(documentation_provenance["git_commit"]),
                     "citation_content_sha256": str(documentation_provenance["content_sha256"]),
                 }
+            )
+        if experiment_provenance:
+            # The service only supplies a redacted, signature-verified subset.
+            # Keep it compact and never introduce raw private-evaluation data
+            # into vector metadata.
+            receipt_context["experiment_id"] = str(experiment_provenance.get("experiment_id") or "")
+            receipt_context["candidate_id"] = str(experiment_provenance.get("candidate_id") or "")
+            receipt_context["private_evaluation_attestation_id"] = str(
+                experiment_provenance.get("attestation_id") or ""
+            )
+            receipt_context["private_evaluation_evidence_hash"] = str(
+                experiment_provenance.get("evidence_hash") or ""
             )
 
         result = self._process_file(

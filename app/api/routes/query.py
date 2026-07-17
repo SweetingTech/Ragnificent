@@ -38,6 +38,9 @@ class QueryRequest(BaseModel):
     # Internal callers that only need vector citations can bypass answer-model
     # generation. This keeps deterministic repository preflight lightweight.
     generate_answer: bool = True
+    # Active/rejected experiment records are excluded from normal retrieval.
+    # This explicit escape hatch is for review/evaluation workflows only.
+    include_experimental: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -48,6 +51,7 @@ class QueryResponse(BaseModel):
     # Repository-docs results provide safe, pinning-aware citations here. Other
     # corpora simply return an empty list rather than inventing provenance.
     citations: List[Dict[str, Any]] = Field(default_factory=list)
+    trust: Dict[str, Any] = Field(default_factory=dict)
     time: Optional[float] = None
 
 
@@ -165,6 +169,7 @@ async def query_api(
     validate_query_model_override(request.llm_model)
 
     # Run the potentially blocking query in a thread pool
+    query_kwargs = {"include_experimental": True} if request.include_experimental else {}
     result = await asyncio.to_thread(
         engine.query,
         request.query,
@@ -172,6 +177,7 @@ async def query_api(
         request.top_k,
         request.llm_model,
         request.generate_answer,
+        **query_kwargs,
     )
 
     # Vector-only callers intentionally receive no synthesized answer. A
@@ -191,6 +197,7 @@ async def query_api(
         answer=answer,
         hits=result['hits'],
         citations=result.get('citations', []),
+        trust=result.get('trust', {}),
         time=result.get('time')
     )
 

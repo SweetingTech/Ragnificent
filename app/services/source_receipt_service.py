@@ -29,12 +29,21 @@ from ..policy import (
     normalize_repository_documentation_provenance,
     normalize_privacy,
 )
+from ..knowledge_trust import (
+    KNOWLEDGE_CLASSES,
+    PRIVILEGED_KNOWLEDGE_CLASSES,
+    KnowledgeTrustViolation,
+    derive_receipt_knowledge_class,
+    normalize_knowledge_class,
+    validate_redacted_private_attestation,
+)
 from ..services.corpus_service import CorpusService
 from ..state.db import Database
 from ..utils.hashing import hash_file
 
 
 ROOT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+OPERATOR_APPROVAL_RECEIPT_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{3,160}$")
 REPOSITORY_DOCS_ROOT_ENV = "RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT"
 REPOSITORY_DOCS_SNAPSHOT_DIRECTORY = "voltron-documentation-snapshots"
 
@@ -210,6 +219,29 @@ def ensure_source_receipts_schema(db: Database) -> None:
                 ADD COLUMN documentation_provenance_json TEXT
                 """
             )
+        if "knowledge_class" not in columns:
+            # Existing receipts must remain least-authoritative until they are
+            # explicitly re-evaluated through the signed experiment path.
+            conn.execute(
+                """
+                ALTER TABLE source_receipts
+                ADD COLUMN knowledge_class TEXT NOT NULL DEFAULT 'unverified'
+                CHECK (knowledge_class IN (
+                    'por', 'validated_lesson', 'operational_evidence',
+                    'active_experiment', 'promoted_experiment',
+                    'rejected_experiment', 'historical_document', 'unverified'
+                ))
+                """
+            )
+        if "experiment_provenance_json" not in columns:
+            # This is deliberately a compact attestation summary, never
+            # private evaluation bodies, prompts, answers, or logs.
+            conn.execute(
+                """
+                ALTER TABLE source_receipts
+                ADD COLUMN experiment_provenance_json TEXT
+                """
+            )
         conn.execute(
             """
             UPDATE source_receipts
@@ -222,6 +254,18 @@ def ensure_source_receipts_schema(db: Database) -> None:
                 WIKI_PUBLICATION_PRIVATE_WIKI_ALLOWED,
                 WIKI_PUBLICATION_LOCAL_ONLY,
             ),
+        )
+        conn.execute(
+            """
+            UPDATE source_receipts
+            SET knowledge_class = 'unverified'
+            WHERE knowledge_class IS NULL
+               OR knowledge_class NOT IN (
+                    'por', 'validated_lesson', 'operational_evidence',
+                    'active_experiment', 'promoted_experiment',
+                    'rejected_experiment', 'historical_document', 'unverified'
+               )
+            """
         )
         # Older route versions treated a structured pipeline result of
         # ``failed`` as if it had been ingested. Repair only those provably
@@ -280,6 +324,24 @@ def _row_to_record(row: Any) -> dict[str, Any]:
             parsed_provenance = None
         if isinstance(parsed_provenance, dict):
             documentation_provenance = parsed_provenance
+    try:
+        knowledge_class = normalize_knowledge_class(row["knowledge_class"])
+    except (IndexError, KeyError):
+        # A legacy record is intentionally not upgraded by a compatibility
+        # read. Its safest effective trust remains unverified.
+        knowledge_class = "unverified"
+    experiment_provenance = None
+    try:
+        experiment_raw = row["experiment_provenance_json"]
+    except (IndexError, KeyError):
+        experiment_raw = None
+    if experiment_raw:
+        try:
+            parsed_experiment = json.loads(experiment_raw)
+        except (TypeError, json.JSONDecodeError):
+            parsed_experiment = None
+        if isinstance(parsed_experiment, dict):
+            experiment_provenance = parsed_experiment
 
     return {
         "receipt_id": row["receipt_id"],
@@ -298,6 +360,8 @@ def _row_to_record(row: Any) -> dict[str, Any]:
         "documentation_provenance": documentation_provenance,
         "privacy": row["privacy"],
         "wiki_publication": wiki_publication,
+        "knowledge_class": knowledge_class,
+        "experiment_provenance": experiment_provenance,
         "correlation_id": row["correlation_id"],
         "idempotency_key": row["idempotency_key"],
         "status": row["status"],
@@ -401,6 +465,13 @@ class SourceReceiptService:
 
         model_policy = self._validate_privacy(str(payload.get("privacy") or "internal"), corpus_config)
         wiki_publication = corpus_wiki_publication(corpus_config)
+        knowledge_class = derive_receipt_knowledge_class(
+            corpus_id=corpus_id,
+            corpus_config=corpus_config,
+            root_id=locator.root_id,
+            source_kind=str(payload["source_kind"]),
+            source_system=str(payload["source_system"]),
+        )
         workspace_id = str(payload["workspace_id"])
         idempotency_key = str(payload["idempotency_key"])
 
@@ -441,9 +512,9 @@ class SourceReceiptService:
                     receipt_id, workspace_id, corpus_id, source_kind, source_system,
                     source_record_id, locator_root_id, locator_relative_path,
                     content_sha256, title, documentation_provenance_json, privacy, wiki_publication,
-                    correlation_id, idempotency_key,
+                    knowledge_class, correlation_id, idempotency_key,
                     status, indexed_file_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)
                 """,
                 (
                     receipt_id,
@@ -459,6 +530,7 @@ class SourceReceiptService:
                     json.dumps(documentation_provenance, sort_keys=True) if documentation_provenance else None,
                     model_policy["privacy"],
                     wiki_publication,
+                    knowledge_class,
                     str(payload.get("correlation_id") or "") or None,
                     idempotency_key,
                     observed_hash,
@@ -527,3 +599,78 @@ class SourceReceiptService:
                 "SELECT * FROM source_receipts WHERE receipt_id = ?", (receipt_id,)
             ).fetchone()
         return _row_to_record(row)
+
+    def promote_experiment_knowledge(
+        self,
+        receipt_id: str,
+        *,
+        target_class: str,
+        private_attestation: Mapping[str, Any],
+        operator_approval_receipt: str = "",
+        production_verified: bool = False,
+    ) -> dict[str, Any]:
+        """Apply a server-verified experiment outcome to a receipt.
+
+        This intentionally has no public HTTP route. A future Harness adapter
+        must call it from a trusted in-process/service integration after it has
+        independently validated the Monitor attestation. Generic source
+        receipt callers cannot self-label a document as POR or validated.
+        """
+        target = normalize_knowledge_class(target_class)
+        allowed_targets = {
+            "rejected_experiment",
+            "promoted_experiment",
+            "validated_lesson",
+            "por",
+        }
+        if target not in allowed_targets:
+            raise SourceReceiptError("Experiment trust promotion target is not allowed.")
+
+        signing_key = os.getenv("RAGNIFICENT_PRIVATE_EVALUATION_ATTESTATION_KEY", "").strip()
+        try:
+            attestation = validate_redacted_private_attestation(
+                private_attestation,
+                signing_key=signing_key,
+            )
+        except KnowledgeTrustViolation as exc:
+            raise SourceReceiptError(str(exc)) from exc
+
+        blocking_signals = bool(attestation["rewardHackingSignals"])
+        requires_positive_private_result = target != "rejected_experiment"
+        if requires_positive_private_result and (attestation["status"] != "passed" or blocking_signals):
+            raise SourceReceiptError(
+                "A failed or reward-hacking private evaluation cannot promote knowledge trust."
+            )
+        if target in {"promoted_experiment", *PRIVILEGED_KNOWLEDGE_CLASSES}:
+            approval_receipt = operator_approval_receipt.strip()
+            if not approval_receipt:
+                raise SourceReceiptError("Promoted knowledge requires an operator approval receipt.")
+            if not OPERATOR_APPROVAL_RECEIPT_PATTERN.fullmatch(approval_receipt):
+                raise SourceReceiptError("Operator approval receipt must be a safe receipt identifier.")
+            if not production_verified:
+                raise SourceReceiptError("Promoted knowledge requires production verification.")
+
+        provenance = {
+            **attestation,
+            "knowledge_class": target,
+            "operator_approval_receipt": operator_approval_receipt.strip() or None,
+            "production_verified": bool(production_verified),
+        }
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM source_receipts WHERE receipt_id = ?", (receipt_id,)
+            ).fetchone()
+            if row is None:
+                raise SourceReceiptNotFound("Source receipt was not found.")
+            conn.execute(
+                """
+                UPDATE source_receipts
+                SET knowledge_class = ?, experiment_provenance_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE receipt_id = ?
+                """,
+                (target, json.dumps(provenance, sort_keys=True), receipt_id),
+            )
+            updated = conn.execute(
+                "SELECT * FROM source_receipts WHERE receipt_id = ?", (receipt_id,)
+            ).fetchone()
+        return _row_to_record(updated)

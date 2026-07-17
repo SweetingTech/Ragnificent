@@ -6,6 +6,25 @@ Voltron is the spine of the Jazzy stack and owns the canonical cross-system enve
 
 Current boundary messages should use the shared outer fields documented in the Voltron canonical envelope spec: schemaVersion, system, producer, agent, messageType, generatedAt, correlationId, readOnly, confidence, sources, brief, payload, risks, warnings, and metadata. Keep native details inside brief or payload; do not flatten system-specific records.
 
+### Experiment trust boundary
+
+RAGnificent never upgrades a source receipt because a caller labels it as
+trusted. When a trusted integration asks to promote experiment-derived
+knowledge, it accepts exactly one private-evaluation wire format:
+`voltron.experiment_evaluation_attestation.v1`. It is the root canonical,
+camel-case redacted attestation (`schemaVersion`, `experimentId`,
+`candidateDigest`, `lane`, `status`, aggregate `categories`, bounded `usage`,
+`rewardHackingSignals`, `evidenceHash`, `issuer`, `keyId`, and `signature`).
+The private lane requires `lane: private`, a valid HMAC signature, a `passed`
+status, no reward-hacking signals, operator approval where applicable, and
+production verification for promoted/privileged knowledge classes.
+
+JazzyMonitor's compact snake-case storage record is an internal projection,
+not a second input dialect. RAGnificent deliberately rejects it, as well as
+private test bodies, prompts, answers, transcripts, logs, and caller-supplied
+category summaries. An evaluation result can be evidence for a later governed
+decision; it is never production authority by itself.
+
 ## Agent Operating Instructions
 
 This document is a standalone operating brief for human-agent pair programming. Agents must treat the guidance here as actionable working instructions, not background context.
@@ -415,6 +434,30 @@ Any missing, malformed, or later-changed value is `local_only`. Changing a
 corpus after a receipt is created does not change that receipt's stored
 authority. The setting governs publication to the authenticated private Wiki;
 it does not alter provider/model locality or make any content public.
+
+### Trust-classified receipt provenance
+
+Receipt-backed vectors now carry a server-derived `knowledge_class`:
+`por`, `validated_lesson`, `operational_evidence`, `active_experiment`,
+`promoted_experiment`, `rejected_experiment`, `historical_document`, or
+`unverified`. It is not accepted in the source-receipt request, so an intake
+caller cannot label its own content as POR or a validated lesson. New generic
+receipts default to `unverified`; an administrator-owned corpus policy can
+derive only non-privileged classes from an exact trusted root/kind/system
+tuple. Repository-doc snapshots are conservatively `historical_document`.
+
+Normal retrieval excludes `active_experiment` and `rejected_experiment`, then
+ranks current truth and validated evidence above operational/history/unverified
+material. A caller can explicitly request experimental history with
+`include_experimental: true`, but that does not raise its trust rank.
+
+`por` and `validated_lesson` require the internal
+`SourceReceiptService.promote_experiment_knowledge(...)` path, a valid
+redacted Monitor private-evaluation attestation, an operator approval receipt,
+and production verification. There is deliberately no public trust-promotion
+route. The Ragnificent attestation key is configured out of band through
+`RAGNIFICENT_PRIVATE_EVALUATION_ATTESTATION_KEY`; it must match the trusted
+Monitor boundary key and must never be included in receipt payloads or docs.
 
 ### Voltron repository documentation lane
 

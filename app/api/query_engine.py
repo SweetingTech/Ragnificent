@@ -21,6 +21,11 @@ from ..services.corpus_service import (
     CorpusValidationError,
 )
 from ..policy import PolicyViolation, assert_corpus_model_policy, assert_provider_allowed, corpus_privacy
+from ..knowledge_trust import (
+    DEFAULT_EXCLUDED_KNOWLEDGE_CLASSES,
+    knowledge_trust_rank,
+    normalize_knowledge_class,
+)
 from ..utils.logging import setup_logging
 from ..config.loader import load_config
 from ..config.schema import GlobalConfig
@@ -269,6 +274,48 @@ class QueryEngine:
         )
 
     @staticmethod
+    def _knowledge_class_for_payload(payload: Dict[str, Any]) -> str:
+        """Resolve a retrieval class without trusting an arbitrary vector."""
+        value = payload.get("knowledge_class")
+        if value:
+            return normalize_knowledge_class(value)
+        # Existing repository documentation uses a narrow receipt lane and
+        # predates this field; preserve that conservative historical status.
+        if payload.get("corpus_id") == "voltron-repository-docs":
+            return "historical_document"
+        return "unverified"
+
+    def _apply_knowledge_trust_policy(
+        self,
+        hits: list[Dict[str, Any]],
+        *,
+        include_experimental: bool,
+    ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+        """Exclude active/rejected experiments by default and rank evidence."""
+        selected: list[Dict[str, Any]] = []
+        excluded: Dict[str, int] = {}
+        for hit in hits:
+            payload = dict(hit.get("payload") or {})
+            knowledge_class = self._knowledge_class_for_payload(payload)
+            payload["knowledge_class"] = knowledge_class
+            normalized_hit = {**hit, "payload": payload}
+            if not include_experimental and knowledge_class in DEFAULT_EXCLUDED_KNOWLEDGE_CLASSES:
+                excluded[knowledge_class] = excluded.get(knowledge_class, 0) + 1
+                continue
+            selected.append(normalized_hit)
+        selected.sort(
+            key=lambda hit: (
+                knowledge_trust_rank(hit["payload"].get("knowledge_class")),
+                -float(hit.get("score") or 0.0),
+            )
+        )
+        return selected, {
+            "profile": "server_derived_trust_v1",
+            "include_experimental": include_experimental,
+            "excluded": excluded,
+        }
+
+    @staticmethod
     def _repository_documentation_citations(
         hits: list[Dict[str, Any]],
     ) -> list[Dict[str, Any]]:
@@ -330,6 +377,7 @@ class QueryEngine:
         top_k: int = 5,
         llm_model: Optional[str] = None,
         generate_answer: bool = True,
+        include_experimental: bool = False,
     ) -> Dict[str, Any]:
         """
         Execute a RAG query.
@@ -366,7 +414,7 @@ class QueryEngine:
         if all_corpora_query:
             try:
                 candidate_corpora = self._get_searchable_corpora()
-                initial_k = top_k * 3 if self.reranker else top_k
+                initial_k = max(top_k * 3, top_k)
                 for search_corpus_id in candidate_corpora:
                     embedder = self._resolve_embedder(search_corpus_id)
                     query_vector = embedder.embed([query_text])[0]
@@ -389,7 +437,7 @@ class QueryEngine:
                 embedder = self._resolve_embedder(corpus_id)
                 query_vector = embedder.embed([query_text])[0]
                 # If reranking is enabled, fetch more candidates initially
-                initial_k = top_k * 3 if self.reranker else top_k
+                initial_k = max(top_k * 3, top_k)
                 hits = self.vector_service.search(corpus_id, query_vector, limit=initial_k)
             except Exception as e:
                 logger.error(f"Search failed: {e}")
@@ -415,13 +463,19 @@ class QueryEngine:
         # Apply reranking if configured
         if self.reranker and formatted_hits:
             try:
-                formatted_hits = self.reranker.rerank(query_text, formatted_hits, top_n=top_k)
+                formatted_hits = self.reranker.rerank(query_text, formatted_hits, top_n=initial_k)
             except Exception as e:
                 logger.error(f"Reranking failed: {e}")
                 # Fallback to taking top_k if reranking fails
-                formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)[:top_k]
+                formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)
         else:
-            formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)[:top_k]
+            formatted_hits = sorted(formatted_hits, key=lambda hit: hit["score"], reverse=True)
+
+        formatted_hits, trust = self._apply_knowledge_trust_policy(
+            formatted_hits,
+            include_experimental=include_experimental,
+        )
+        formatted_hits = formatted_hits[:top_k]
 
         citations = self._repository_documentation_citations(formatted_hits)
 
@@ -433,6 +487,7 @@ class QueryEngine:
                 "query": query_text,
                 "hits": formatted_hits,
                 "citations": citations,
+                "trust": trust,
                 "answer": None,
                 "time": time.time() - start_time,
             }
@@ -471,6 +526,7 @@ class QueryEngine:
                     return {
                         "query": query_text,
                         "hits": formatted_hits,
+                        "trust": trust,
                         "answer": f"Answer generation blocked by local_only policy: {exc}",
                         "time": time.time() - start_time,
                     }
@@ -493,6 +549,7 @@ class QueryEngine:
                 return {
                     "query": query_text,
                     "hits": formatted_hits,
+                    "trust": trust,
                     "answer": f"Answer generation blocked by local_only policy: {exc}",
                     "time": time.time() - start_time,
                 }
@@ -505,6 +562,7 @@ class QueryEngine:
                     return {
                         "query": query_text,
                         "hits": formatted_hits,
+                        "trust": trust,
                         "answer": f"Answer generation blocked by local_only policy: {exc}",
                         "time": time.time() - start_time,
                     }
@@ -541,6 +599,7 @@ class QueryEngine:
             "query": query_text,
             "hits": formatted_hits,
             "citations": citations,
+            "trust": trust,
             "answer": answer,
             "time": time.time() - start_time
         }
