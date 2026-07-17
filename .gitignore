@@ -76,8 +76,13 @@ rag_library/corpora/
 rag_library/corpora/*/inbox/*
 !rag_library/corpora/*/inbox/.gitkeep
 
-# Local-only troubleshooting and test assets
-tests/
+# Local-only troubleshooting and test assets. These focused regression tests
+# are tracked because they protect the external security contract; other local
+# test files remain private to this workstation.
+tests/*
+!tests/test_source_receipts_security.py
+!tests/test_query_route_policy.py
+!tests/test_local_only_policy.py
 changelog.md
 20260129_Changelog.md
 

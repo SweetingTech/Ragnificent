@@ -4,8 +4,9 @@ actually works before saving it to config.
 """
 import os
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from ...security import require_legacy_mutation_access
 from pydantic import BaseModel
 from typing import Optional
 
@@ -153,7 +154,11 @@ def _test_anthropic_llm(base_url: str, model: str, api_key: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/test-connection")
-def test_connection(body: TestRequest):
+def test_connection(
+    request: Request,
+    body: TestRequest,
+    _: None = Depends(require_legacy_mutation_access),
+):
     provider = body.provider.lower()
     role = body.role.lower()
     model = body.model.strip()

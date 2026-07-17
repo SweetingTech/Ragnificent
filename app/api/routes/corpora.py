@@ -3,13 +3,14 @@ Corpora API routes — agent-facing endpoints for discovering and managing RAG d
 
 Designed for programmatic access by AI agents and other clients.
 """
-from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi import APIRouter, HTTPException, Depends, Response, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
 import os
 import shutil
+import copy
 
 from ...config.loader import load_config
 from ...config.schema import GlobalConfig
@@ -17,6 +18,7 @@ from ...services.corpus_service import CorpusService, CorpusValidationError, val
 from ...vector.qdrant_client import VectorService
 from ...state.db import Database
 from ...utils.logging import setup_logging
+from ...security import require_legacy_mutation_access
 
 logger = setup_logging()
 
@@ -36,7 +38,7 @@ class CorpusSummary(BaseModel):
 
 
 class CorpusDetail(CorpusSummary):
-    """Full detail for a single corpus, including chunking and model config."""
+    """Public detail for a corpus with server paths and credentials removed."""
     config: Dict[str, Any]
 
 
@@ -63,6 +65,7 @@ class CreateCorpusRequest(BaseModel):
     chunk_strategy: str = "pdf_sections"
     chunk_max_tokens: int = 700
     chunk_overlap_tokens: int = 80
+    privacy: str = "internal"
 
 
 class CreateCorpusResponse(BaseModel):
@@ -100,6 +103,18 @@ def _build_summary(corpus_meta: Dict, vector_service: VectorService) -> CorpusSu
         vector_count=vector_service.get_count(corpus_id),
         query_endpoint="/api/query",
     )
+
+
+def _public_corpus_config(config: Any) -> Dict[str, Any]:
+    """Avoid exposing server paths or credential material through a read route."""
+    safe = copy.deepcopy(config) if isinstance(config, dict) else {}
+    safe.pop("source_path", None)
+    models = safe.get("models")
+    if isinstance(models, dict):
+        for model_config in models.values():
+            if isinstance(model_config, dict):
+                model_config.pop("api_key", None)
+    return safe
 
 
 @router.get("", response_model=List[CorpusSummary])
@@ -198,14 +213,16 @@ async def get_corpus(
         raise HTTPException(status_code=404, detail=f"Corpus '{corpus_id}' not found")
 
     summary = _build_summary(meta, vector_service)
-    return CorpusDetail(**summary.model_dump(), config=meta.get("config", {}))
+    return CorpusDetail(**summary.model_dump(), config=_public_corpus_config(meta.get("config", {})))
 
 
 
 @router.post("", response_model=CreateCorpusResponse, status_code=201)
 async def create_corpus(
+    request: Request,
     body: CreateCorpusRequest,
     corpus_service: CorpusService = Depends(get_corpus_service),
+    _: None = Depends(require_legacy_mutation_access),
 ):
     """
     Create a new RAG corpus (database) via the API.
@@ -257,9 +274,12 @@ async def create_corpus(
             chunk_strategy=body.chunk_strategy,
             chunk_max_tokens=body.chunk_max_tokens,
             chunk_overlap_tokens=body.chunk_overlap_tokens,
+            privacy=body.privacy,
         )
         created_on_disk = True
         logger.info(f"API: created corpus {body.corpus_id}")
+    except CorpusValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception(f"Failed to create corpus {body.corpus_id}")
         # Roll back the on-disk corpus if vector collection setup failed
@@ -284,10 +304,12 @@ async def create_corpus(
 
 @router.delete("/{corpus_id}", status_code=204)
 async def delete_corpus(
+    request: Request,
     corpus_id: str,
     corpus_service: CorpusService = Depends(get_corpus_service),
     vector_service: VectorService = Depends(get_vector_service),
     db: Database = Depends(get_database),
+    _: None = Depends(require_legacy_mutation_access),
 ):
     """
     Permanently delete a corpus: removes the Qdrant collection, all SQLite records,

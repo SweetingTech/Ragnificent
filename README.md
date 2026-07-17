@@ -294,7 +294,11 @@ If you change `.env`, restart the app. The watcher reloads code, templates, CSS,
 4. Trigger ingestion via the Manage page and watch live progress
 5. Query at `/gui/search` — select a corpus, ask a question, get an answer with citations
 
-### Via the API (for agents or scripts)
+### Via the API (legacy local administration)
+
+The examples below remain for the local administrator UI/CLI migration path.
+New Agent Harness, AoJ, and Wiki.js source integrations must use the governed
+source-receipt API above rather than submitting `source_path` values.
 
 ```bash
 # Create a corpus pointed at any local folder
@@ -330,29 +334,130 @@ python -m app.cli ingest --corpus <corpus_id> --rebuild
 python -m app.cli ingest-file /path/to/file.pdf --corpus <corpus_id>
 ```
 
-### Source path vs. inbox
+### Source path vs. inbox (legacy corpus administration)
 
 Each corpus has two document locations:
 
 | Path | Purpose |
 |---|---|
-| `source_path` | Any folder you point to — RAGnificent scans this for documents |
+| `source_path` | Local administrator-configured folder scanned by the legacy corpus workflow |
 | `rag_library/corpora/<id>/inbox/` | Drop zone inside the library — also scanned during ingestion |
 
 `source_path` is the main scan target stored in the corpus config. The per-corpus `inbox/` remains available as a drop zone inside `rag_library/`. The RAG vector database always lives in `rag_library/` regardless of where the source documents are.
 
 ---
 
-## API Reference
+## Governed source receipts (Voltron / Wiki.js intake)
 
-CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your local network — including AI agents — can call the API without browser restrictions.
+RAGnificent has a dedicated machine-to-machine source receipt boundary for
+Agent Harness and future Wiki.js compilation. It exists so a caller cannot use
+the retrieval service as a remote file reader or choose a provider/model route
+for a source on the fly.
+
+The authority sequence is:
+
+```text
+Agent Harness reviewed source/evidence
+  -> POST /api/source-receipts (hash-verified receipt)
+  -> POST /api/source-receipts/{receipt_id}/ingest (exact file only)
+  -> RAGnificent retrieval citation / Agent Harness claim evidence mapping
+```
+
+Configure `RAGNIFICENT_INTERNAL_TOKEN` before using this API. Both endpoints
+require the `X-Ragnificent-Token` header even from localhost; without a
+configured token they fail closed. The request names only a configured logical
+root and a relative path, never an arbitrary server filesystem path:
+
+```json
+{
+  "workspace_id": "voltron",
+  "corpus_id": "trombone-operator-memory",
+  "source_kind": "agent_artifact",
+  "source_system": "agent_harness",
+  "source_record_id": "task_123",
+  "source_locator": {
+    "root_id": "agent_harness_aar_sources",
+    "relative_path": "trombone-operator-memory/lesson.md"
+  },
+  "content_sha256": "<sha256-of-the-file>",
+  "privacy": "internal",
+  "correlation_id": "corr_123",
+  "idempotency_key": "stable-publisher-key"
+}
+```
+
+The response contains a stable `receipt_id` and canonical locator such as
+`ragnificent://source-receipts/<receipt_id>`. Agent Harness should store that
+locator alongside claim evidence; it must not treat the RAG index as the
+canonical claim store.
+
+`privacy` is one of `internal`, `restricted`, or `local_only` and must match
+the corpus policy. A `local_only` corpus accepts only Ollama embedding and
+answer routes; OpenAI, Anthropic, and OpenRouter routes are rejected before
+the source content is sent to them.
+
+### Private Wiki publication authority
+
+Source receipts also persist an immutable `wiki_publication` decision. This is
+not a request field: RAGnificent computes it once from the administrator-owned
+target corpus configuration and returns it in the receipt response. Existing
+and unconfigured receipts default to `local_only`.
+
+Only a non-`local_only` corpus with this exact typed `corpus.yaml` setting can
+produce a receipt marked `private_wiki_allowed`:
+
+```yaml
+privacy: internal # or restricted
+wiki_publication: private_wiki_allowed
+```
+
+Any missing, malformed, or later-changed value is `local_only`. Changing a
+corpus after a receipt is created does not change that receipt's stored
+authority. The setting governs publication to the authenticated private Wiki;
+it does not alter provider/model locality or make any content public.
+
+### Voltron repository documentation lane
+
+`voltron-repository-docs` is a separate source-receipt-only corpus for the
+allowlisted README/docs snapshots produced by Agent Harness's documentation
+catalog. It does **not** trust a broad Voltron workspace path or use the legacy
+folder scan. Docker Compose mounts the host-generated
+`../Agent_Harness_Template/data/runtime/wiki/documentation-snapshots` directory
+read-only at `/app/voltron-documentation-snapshots`; configure
+`RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` to that **container-visible** path,
+install the exact corpus policy template, and submit one hash-verified
+`repository_documentation` receipt per snapshot.
+Queries return repo/path/commit/hash receipt citations without leaking local
+snapshot paths. See [docs/voltron-repository-docs.md](docs/voltron-repository-docs.md)
+and [docs/voltron-repository-docs.corpus.yaml](docs/voltron-repository-docs.corpus.yaml)
+for the deployment contract.
+
+### Legacy API migration
+
+Existing `/api/corpora` and `/api/ingest/run` workflows remain temporarily
+available for local UI/CLI compatibility. Without a token, their mutation
+routes are loopback-only. Set `RAGNIFICENT_REQUIRE_INTERNAL_AUTH=true` after
+the Agent Harness/AoJ callers send `X-Ragnificent-Token` to require the same
+token for those legacy routes too. New Voltron and Wiki.js source work must
+use source receipts; do not add new integrations to `source_path` overrides.
+
+Browser CORS is an explicit local-origin allowlist controlled by
+`RAGNIFICENT_CORS_ORIGINS`; it is not an authorization mechanism. Keep the
+service bound to `API_HOST=127.0.0.1` unless a separately authenticated reverse
+proxy is in front of it.
+
+### API Reference
+
+Browser CORS is limited to explicit local origins by default. Agents should
+use the authenticated AgentsOfJazzy proxy or the controlled local service
+boundary rather than relying on browser CORS.
 
 ### Corpus / Database Management
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/corpora` | List all RAG databases with vector counts and query endpoint |
-| `GET` | `/api/corpora/{corpus_id}` | Full detail for one corpus (config, vector count, paths) |
+| `GET` | `/api/corpora/{corpus_id}` | Public detail for one corpus (sanitized config and vector count; no server paths or credentials) |
 | `POST` | `/api/corpora` | Create a new corpus pointed at any local folder |
 | `DELETE` | `/api/corpora/{corpus_id}` | Delete corpus — removes Qdrant collection, state records, and directory |
 
@@ -370,6 +475,9 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 | `POST` | `/api/ingest/run?rebuild=true` | Rebuild one corpus from scratch: clears its existing vectors + ingest state, then reprocesses all source files |
 | `POST` | `/api/ingest/run?retry_failed_only=true` | Retry only failed files for a corpus |
 | `GET` | `/api/ingest/status` | Current ingestion status, counts, current file, and progress percentage |
+| `POST` | `/api/source-receipts` | Authenticated, hash-verified source receipt; no caller-controlled filesystem path or model route |
+| `GET` | `/api/source-receipts/{receipt_id}` | Authenticated receipt/provenance lookup |
+| `POST` | `/api/source-receipts/{receipt_id}/ingest` | Authenticated exact-file ingestion for an accepted receipt |
 
 ### Utilities
 
@@ -395,6 +503,13 @@ CORS is fully open (`Access-Control-Allow-Origin: *`) so any client on your loca
 | Variable | Description |
 |----------|-------------|
 | `API_PORT` | Server port (default `8008`) |
+| `API_HOST` | Bind host (default `127.0.0.1`; do not expose directly without an authenticated proxy) |
+| `RAGNIFICENT_INTERNAL_TOKEN` | Required token for `/api/source-receipts`; also protects legacy mutations in strict mode |
+| `RAGNIFICENT_REQUIRE_INTERNAL_AUTH` | Set `true` only after existing API callers send `X-Ragnificent-Token` |
+| `RAGNIFICENT_TRUSTED_SOURCE_ROOTS` | Optional JSON map of logical root IDs to server paths for source receipts |
+| `RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` | Docker-container path `/app/voltron-documentation-snapshots` for the read-only Agent Harness documentation snapshot mount |
+| `RAGNIFICENT_CORS_ORIGINS` | Explicit comma-separated browser origin allowlist; wildcard values are ignored |
+| `RAGNIFICENT_ALLOWED_QUERY_MODEL_OVERRIDES` | Explicit model-ID allowlist for HTTP `llm_model` overrides; empty disables overrides |
 | `QDRANT_URL` | Qdrant connection URL |
 | `LIBRARY_ROOT` | Root directory for corpora and data (default `rag_library`) |
 | `ANTHROPIC_API_KEY` | Anthropic API key |

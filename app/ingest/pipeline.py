@@ -2,7 +2,7 @@
 Document ingestion pipeline for processing and indexing documents.
 Handles file scanning, extraction, chunking, embedding, and storage.
 """
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, Mapping
 import os
 import glob
 import time
@@ -21,6 +21,7 @@ from ..providers.factory import (
     get_embedding_provider,
 )
 from ..services.corpus_service import CorpusService, validate_corpus_id, CorpusValidationError
+from ..policy import assert_corpus_model_policy
 from .chunkers.pdf_sections import PdfSectionChunker
 from .chunkers.code_symbols import CodeSymbolChunker
 from .chunkers.markdown import MarkdownChunker
@@ -216,6 +217,7 @@ class IngestionPipeline:
         }
 
     def _get_embedder_for_corpus(self, corpus_config: Dict[str, Any]):
+        self._assert_corpus_model_policy(corpus_config)
         settings = self._get_embedding_settings(corpus_config)
         if (
             settings["provider"] == self.config.models.embeddings.provider
@@ -229,6 +231,15 @@ class IngestionPipeline:
             settings["base_url"],
             settings["model"],
             settings["api_key"],
+        )
+
+    def _assert_corpus_model_policy(self, corpus_config: Dict[str, Any]) -> str:
+        """Reject an unsafe provider before extraction or embedding can begin."""
+        default_answer = self.config.models.answer
+        return assert_corpus_model_policy(
+            corpus_config,
+            default_embedding_provider=self.config.models.embeddings.provider,
+            default_answer_provider=default_answer.provider if default_answer else "ollama",
         )
 
     def _get_chunker(self, file_ext: str, corpus_config: Dict[str, Any]):
@@ -435,6 +446,75 @@ class IngestionPipeline:
             )
         return summary
 
+    def ingest_receipted_file(
+        self,
+        *,
+        corpus_id: str,
+        file_path: str,
+        receipt_id: str,
+        canonical_locator: str,
+        expected_hash: str,
+        documentation_provenance: Optional[Mapping[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Ingest one hash-verified file from the source-receipt boundary.
+
+        This intentionally bypasses ``run_once(..., source_path_override=...)``:
+        a receipt may name exactly one file and must not cause neighboring files
+        in the same directory to be scanned or ingested.
+        """
+        try:
+            validate_corpus_id(corpus_id)
+        except CorpusValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        source = os.path.abspath(file_path)
+        if not os.path.isfile(source):
+            raise ValueError("Receipt source file is no longer available")
+        if os.path.splitext(source)[1].lower() not in {
+            ".pres", ".pdf", ".md", ".txt", ".py", ".epub", ".png", ".jpg", ".jpeg", ".tiff"
+        }:
+            raise ValueError("Receipt source type is not supported for ingestion")
+        current_hash = hash_file(source)
+        if current_hash.lower() != expected_hash.lower():
+            raise ValueError("Receipt source content changed after hash verification")
+
+        corpora = self._get_corpora(corpus_id)
+        if len(corpora) != 1:
+            raise ValueError("Receipt target corpus is unavailable")
+        corpus = corpora[0]
+        self._assert_corpus_model_policy(corpus["config"])
+        embedder = self._get_embedder_for_corpus(corpus["config"])
+        receipt_context: Dict[str, str] = {
+            "source_receipt_id": receipt_id,
+            "source_receipt_locator": canonical_locator,
+            # Do not return the machine-local snapshot path in a receipt-backed
+            # vector payload. The immutable receipt locator is the safe source
+            # reference for all receipt types.
+            "source": canonical_locator,
+        }
+        if documentation_provenance:
+            receipt_context.update(
+                {
+                    "citation_repository": str(documentation_provenance["repository"]),
+                    "citation_path": str(documentation_provenance["path"]),
+                    "citation_git_commit": str(documentation_provenance["git_commit"]),
+                    "citation_content_sha256": str(documentation_provenance["content_sha256"]),
+                }
+            )
+
+        result = self._process_file(
+            source,
+            corpus_id,
+            corpus["config"],
+            embedder,
+            receipt_context=receipt_context,
+        )
+        return {
+            "status": result,
+            "corpus_id": corpus_id,
+            "file_hash": current_hash,
+            "source_receipt_id": receipt_id,
+        }
+
     def _process_file(
         self,
         file_path: str,
@@ -442,6 +522,7 @@ class IngestionPipeline:
         corpus_config: Dict[str, Any],
         embedder,
         run_logger: Optional[Callable[[str], None]] = None,
+        receipt_context: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         Process a single file through the ingestion pipeline.
@@ -520,6 +601,12 @@ class IngestionPipeline:
             else:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     text = f.read()
+
+            # Preserve the controlled receipt locator in any newly-created
+            # vector payload. The durable receipt table remains the source of
+            # truth even if a deduplicated file is skipped.
+            if receipt_context:
+                metadata.update(receipt_context)
 
             # Select chunker based on extension
             chunker = self._get_chunker(ext, corpus_config)

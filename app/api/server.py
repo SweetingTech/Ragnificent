@@ -9,6 +9,9 @@ from .routes import health, query, ingest, corpora, test_connection, agenda
 from ..gui import routes as gui_routes
 from ..utils.logging import setup_logging
 from ..vector.qdrant_client import VectorService, get_connection_error
+from ..security import configured_cors_origins
+from ..services.source_receipt_service import ensure_source_receipts_schema
+from .routes import source_receipts
 
 # Load .env on every worker startup (including hot-reloads)
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -32,6 +35,7 @@ async def lifespan(app: FastAPI):
         )
         try:
             db.init_db(schema_path)
+            ensure_source_receipts_schema(db)
             logger.info("State database ready.")
         finally:
             db.close()
@@ -57,13 +61,14 @@ async def lifespan(app: FastAPI):
 def create_app():
     app = FastAPI(title="Ragnificent", version="0.1.0", lifespan=lifespan)
 
-    # CORS — allow all origins on the local network
+    # Browser access is intentionally explicit.  Service-to-service callers do
+    # not need CORS, and a wildcard is not an authorization boundary.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=configured_cors_origins(),
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Correlation-ID", "X-Ragnificent-Token"],
     )
 
     # Mount Static
@@ -78,6 +83,7 @@ def create_app():
     app.include_router(corpora.router, prefix="/api")
     app.include_router(agenda.router, prefix="/api")
     app.include_router(test_connection.router, prefix="/api")
+    app.include_router(source_receipts.router, prefix="/api")
     app.include_router(gui_routes.router)
 
     @app.get("/")

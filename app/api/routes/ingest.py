@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, Generator
@@ -21,6 +21,7 @@ from ...state.db import Database
 from ...vector.qdrant_client import VectorService, get_connection_error
 from ...services.corpus_service import validate_corpus_id, CorpusValidationError
 from ...utils.logging import setup_logging
+from ...security import require_legacy_mutation_access
 
 logger = setup_logging()
 
@@ -143,21 +144,23 @@ def get_pipeline(db: Database = Depends(get_database)) -> IngestionPipeline:
 
 @router.post("/run", response_model=IngestResponse)
 async def run_ingest(
+    request: Request,
     corpus_id: Optional[str] = None,
     source_path: Optional[str] = None,
     retry_failed_only: bool = False,
     rebuild: bool = False,
-    pipeline: IngestionPipeline = Depends(get_pipeline)
+    pipeline: IngestionPipeline = Depends(get_pipeline),
+    _: None = Depends(require_legacy_mutation_access),
 ):
     """
     Trigger document ingestion.
 
     Args:
         corpus_id: Optional specific corpus to ingest. If not provided, all corpora are processed.
-        source_path: Optional path to scan for documents. Can be any absolute or relative
-                     path on the server (e.g. D:/Books, /mnt/nas/documents).
-                     When provided, corpus_id must also be given so documents are stored
-                     in the correct corpus collection.  The corpus must already exist.
+        source_path: Legacy local-only override. New integrations must use the
+                     authenticated ``/api/source-receipts`` contract instead.
+                     When supplied, corpus_id must also be given so documents
+                     are stored in the correct corpus collection.
 
     Returns:
         Ingestion status and summary

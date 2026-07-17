@@ -3,7 +3,7 @@ Query API routes for search and RAG functionality.
 """
 import asyncio
 from fastapi import APIRouter, Form, Request, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
 from fastapi.templating import Jinja2Templates
@@ -18,6 +18,7 @@ from ...providers.ollama import OllamaLLM
 from ...providers.reranker import RerankProvider, get_rerank_provider
 from ..query_engine import QueryEngine
 from ...utils.logging import setup_logging
+from ...security import validate_query_model_override
 
 logger = setup_logging()
 
@@ -34,6 +35,9 @@ class QueryRequest(BaseModel):
     corpus_id: Optional[str] = None
     top_k: int = 5
     llm_model: Optional[str] = None
+    # Internal callers that only need vector citations can bypass answer-model
+    # generation. This keeps deterministic repository preflight lightweight.
+    generate_answer: bool = True
 
 
 class QueryResponse(BaseModel):
@@ -41,6 +45,9 @@ class QueryResponse(BaseModel):
     query: str
     answer: Optional[str] = None
     hits: List[Dict[str, Any]]
+    # Repository-docs results provide safe, pinning-aware citations here. Other
+    # corpora simply return an empty list rather than inventing provenance.
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
     time: Optional[float] = None
 
 
@@ -155,26 +162,35 @@ async def query_api(
     Returns:
         Query response with answer and source hits
     """
+    validate_query_model_override(request.llm_model)
+
     # Run the potentially blocking query in a thread pool
     result = await asyncio.to_thread(
         engine.query,
         request.query,
         request.corpus_id,
         request.top_k,
-        request.llm_model
+        request.llm_model,
+        request.generate_answer,
     )
 
-    # Use the actual answer from the engine (LLM-generated)
+    # Vector-only callers intentionally receive no synthesized answer. A
+    # friendly fallback here would make a caller believe an answer-model pass
+    # occurred, and it would defeat the deterministic internal-preflight mode.
     answer = result.get('answer')
-    if answer is None and result['hits']:
-        answer = f"Found {len(result['hits'])} relevant matches."
-    elif answer is None:
-        answer = "No relevant knowledge found (or no corpus selected)."
+    if request.generate_answer:
+        if answer is None and result['hits']:
+            answer = f"Found {len(result['hits'])} relevant matches."
+        elif answer is None:
+            answer = "No relevant knowledge found (or no corpus selected)."
+    else:
+        answer = None
 
     return QueryResponse(
         query=request.query,
         answer=answer,
         hits=result['hits'],
+        citations=result.get('citations', []),
         time=result.get('time')
     )
 
@@ -199,6 +215,8 @@ async def query_ui(
     Returns:
         HTML template response with search results
     """
+    validate_query_model_override(llm_model)
+
     # Run the potentially blocking query in a thread pool
     result = await asyncio.to_thread(
         engine.query,
@@ -218,6 +236,7 @@ async def query_ui(
         "corpus_id": corpus_id,
         "answer": answer,
         "hits": hits,
+        "citations": result.get("citations", []),
         "time": result.get('time', 0)
     }
 
