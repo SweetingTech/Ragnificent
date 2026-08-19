@@ -50,34 +50,36 @@ too simple to be useful or too complex to actually run.**
 
 </div>
 
-RAGnificent is a document intelligence service that runs locally or connects to cloud AI providers. Drop files into a folder, trigger a sync, and get a persistent queryable vector index back with LLM answers and citations. Each corpus gets its own isolated Qdrant collection, its own chunking strategy, its own answer model, and now its own embedding configuration. No shared state between document sets.
+RAGnificent is a document intelligence service that runs locally or connects to cloud AI providers. Drop files into a folder, trigger a sync, and get a persistent queryable vector index back with optional LLM answers and retrieval evidence. Each corpus gets its own Qdrant collection and `corpus.yaml` policy. Corpus metadata and ingest records share the service's SQLite state database, so isolation applies to vector collections and per-corpus configuration, not to the process or state-database instance.
 
 ---
 
 ## Jazzy Workspace Gateway
 
-In the full Voltron workspace stack, RAGnificent runs directly at `http://localhost:8018` on the local host only and is also exposed through AgentsOfJazzy authenticated proxy endpoints:
+The repository's direct host URL defaults to `http://127.0.0.1:8008`. In Docker, set `API_HOST=0.0.0.0` inside the container; Compose still publishes the service only on host loopback. A workspace can map the host side to `8018` with `RAGNIFICENT_HOST_PORT=8018` when `8008` is already assigned.
+
+AgentsOfJazzy can expose RAGnificent through these consumer-owned proxy routes:
 
 - `http://localhost:9002/v1/ragnificent/health`
 - `http://localhost:9002/v1/ragnificent/corpora`
 - `http://localhost:9002/v1/ragnificent/ingest/run`
 - `http://localhost:9002/v1/ragnificent/query`
 
-AgentsOfJazzy gets its `x-auth` token from `JazzyTheAI/.env` `AGENTS_AUTH`, so JazzyTheAI can call RAGnificent through AgentsOfJazzy without maintaining a second shared token.
+This repository neither creates nor authenticates those proxy routes. Verify their availability and `x-auth` contract in the current AgentsOfJazzy source before using them.
 
 ## Trombone Memory Role
 
 Updated: 2026-04-20
 
-RAGnificent is the vector-memory backend for Trombone's AAR learning and operator memory, but Trombone should not manage vector internals directly. Agent Harness routes memory work to `ragnificent_vector_agent`, which owns RAGnificent health, corpus creation, AAR reindexing, query behavior, and proposed RAGnificent changes.
+RAGnificent provides the vector retrieval and source-receipt boundary that Trombone or Agent Harness can use for AAR learning and operator memory. RAGnificent does not route Trombone jobs or define an Agent Harness specialist name; those decisions remain consumer-owned.
 
-The dedicated Trombone corpus is:
+The consumer documentation names this dedicated corpus ID:
 
 ```text
 trombone-operator-memory
 ```
 
-That corpus contains Trombone-only operator docs, recent AAR lessons, failure lessons, self-improvement lessons, agent manifests, and routing/governance context. It must remain separate from Jazzy chat/user memory corpora. Allowlisted auxiliary reference corpora such as `LLM` and `LLM_cookbooks` may support technical answers. Denied corpora such as `smut` and `smutt` must not be used for Trombone operator responses.
+This repository and its setup scripts do not create that corpus. Discover it with `GET /api/corpora` before relying on it, and keep operator memory separate from chat/user corpora when provisioning it. RAGnificent does not hardcode Trombone corpus allow/deny names: `POST /api/agenda/evidence/brief` applies the caller-supplied `allowed_corpora` and `denied_corpora` lists without ingesting or mutating a corpus.
 
 ---
 
@@ -186,9 +188,10 @@ graph TD
 
 ### Retrieval
 - Vector similarity search with LLM-generated answers
-- Source citations returned with every response
+- Every query response returns `hits`; the structured `citations` list is populated for pinned `voltron-repository-docs` provenance and is otherwise empty rather than inferred
+- `POST /api/agenda/evidence/brief` can convert selected vector hits into bounded citation records for governed agenda retrieval
 - Optional post-retrieval reranking stage (pluggable)
-- Configurable `top_k`, model selection per query
+- Configurable `top_k`, `generate_answer`, and `include_experimental`; HTTP `llm_model` overrides work only for IDs in `RAGNIFICENT_ALLOWED_QUERY_MODEL_OVERRIDES`
 
 ### Interface
 - Web GUI: dashboard, RAG search, corpus management, corpus creation, settings
@@ -218,11 +221,18 @@ graph TD
 ```bash
 cp .env.example .env
 # Edit .env and add your API keys (optional — only needed for cloud providers)
-docker-compose up -d
+docker compose up -d
 # Service: http://localhost:8008
 ```
 
-When running RAGnificent inside the full Jazzy workspace, Agent Builder owns host port `8008`. Set the host-published RAGnificent port before starting Docker:
+Before Docker startup, use container-visible values in `.env` instead of the bare-Windows defaults:
+
+```env
+API_HOST=0.0.0.0
+STATE_DB_PATH=/app/rag_library/state/ingest.sqlite
+```
+
+If another workspace service owns host port `8008`, choose another host-published port before starting Docker:
 
 ```env
 RAGNIFICENT_HOST_PORT=8018
@@ -234,7 +244,7 @@ With that setting, RAGnificent still listens on `8008` inside the container, but
 http://localhost:8018
 ```
 
-AgentsOfJazzy should then use:
+Any direct consumer should then use:
 
 ```env
 RAGNIFICENT_URL=http://localhost:8018
@@ -278,7 +288,7 @@ python scripts/pull_ollama_models.py --mode catalog
 ./scripts/windows/stop.ps1
 ```
 
-This kills the entire process tree (watcher + uvicorn workers) and verifies the port is clear before returning.
+This kills the entire process tree (watcher + uvicorn workers) and checks port `8008`. The script does not read `API_PORT`; if bare Python is running on an override port, stop that listener separately.
 
 ---
 
@@ -362,7 +372,7 @@ Each corpus has two document locations:
 | `source_path` | Local administrator-configured folder scanned by the legacy corpus workflow |
 | `rag_library/corpora/<id>/inbox/` | Drop zone inside the library — also scanned during ingestion |
 
-`source_path` is the main scan target stored in the corpus config. The per-corpus `inbox/` remains available as a drop zone inside `rag_library/`. The RAG vector database always lives in `rag_library/` regardless of where the source documents are.
+`source_path` is the main scan target stored in the corpus config. The per-corpus `inbox/` remains available as a drop zone inside `rag_library/`. Corpus configuration and SQLite ingest state live under the configured library root; vectors live in the configured Qdrant backend and its storage volume.
 
 ---
 
@@ -485,9 +495,10 @@ token for those legacy routes too. New Voltron and Wiki.js source work must
 use source receipts; do not add new integrations to `source_path` overrides.
 
 Browser CORS is an explicit local-origin allowlist controlled by
-`RAGNIFICENT_CORS_ORIGINS`; it is not an authorization mechanism. Keep the
-service bound to `API_HOST=127.0.0.1` unless a separately authenticated reverse
-proxy is in front of it.
+`RAGNIFICENT_CORS_ORIGINS`; it is not an authorization mechanism. For bare
+Python, keep the service bound to `API_HOST=127.0.0.1` unless a separately
+authenticated reverse proxy is in front of it. Inside Docker, bind the process
+to `API_HOST=0.0.0.0`; Compose keeps the published host socket on `127.0.0.1`.
 
 ### API Reference
 
@@ -501,14 +512,16 @@ boundary rather than relying on browser CORS.
 |--------|------|-------------|
 | `GET` | `/api/corpora` | List all RAG databases with vector counts and query endpoint |
 | `GET` | `/api/corpora/{corpus_id}` | Public detail for one corpus (sanitized config and vector count; no server paths or credentials) |
-| `POST` | `/api/corpora` | Create a new corpus pointed at any local folder |
+| `GET` | `/api/corpora/{corpus_id}/stats` | Uncached vector count plus SQLite success/failed file counts |
+| `POST` | `/api/corpora` | Legacy administrator creation using a server/container-visible source folder; loopback-only without a valid internal token |
 | `DELETE` | `/api/corpora/{corpus_id}` | Delete corpus — removes Qdrant collection, state records, and directory |
 
 ### Query
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/query` | RAG query — `query`, `corpus_id`, `top_k`, `llm_model` |
+| `GET` | `/api/query/models` | Discover models from the configured Ollama endpoint; returns an empty list plus warning when unavailable |
+| `POST` | `/api/query` | RAG query with `query`, `corpus_id`, `top_k`, `generate_answer`, and `include_experimental`; `llm_model` is allowlist-gated |
 
 ### Ingestion
 
@@ -522,12 +535,19 @@ boundary rather than relying on browser CORS.
 | `GET` | `/api/source-receipts/{receipt_id}` | Authenticated receipt/provenance lookup |
 | `POST` | `/api/source-receipts/{receipt_id}/ingest` | Authenticated exact-file ingestion for an accepted receipt |
 
+### Governed agenda evidence
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/agenda/evidence` | Read-only corpus inventory in the Voltron evidence envelope |
+| `POST` | `/api/agenda/evidence/brief` | Read-only, allow/deny-filtered retrieval brief with bounded citations and optional answer generation |
+
 ### Utilities
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/test-connection` | Test provider connectivity — `role`, `provider`, `model`, `base_url` |
-| `GET` | `/health` | Health check |
+| `POST` | `/api/test-connection` | Legacy mutation-gated provider probe using `role`, `provider`, `model`, and optional `base_url` |
+| `GET` | `/health` | Probes Qdrant plus configured embedding/answer providers; returns `200` when all are healthy and `503` when degraded |
 
 ### Connecting an AI agent
 
@@ -541,27 +561,29 @@ boundary rather than relying on browser CORS.
 
 ## Configuration
 
-### `.env` — secrets and ports
+### `.env` — runtime environment
 
 | Variable | Description |
 |----------|-------------|
-| `API_PORT` | Server port (default `8008`) |
-| `API_HOST` | Bind host (default `127.0.0.1`; do not expose directly without an authenticated proxy) |
+| `API_PORT` | Bare-Python/container listen port (default `8008`); leave it at `8008` with the current Compose container mapping |
+| `API_HOST` | Bare-Python default is `127.0.0.1`; use `0.0.0.0` inside Docker, whose published host socket remains loopback-only |
+| `RAGNIFICENT_HOST_PORT` | Docker host-published port (default `8008`; use `8018` only when the workspace port map requires it) |
 | `RAGNIFICENT_INTERNAL_TOKEN` | Required token for `/api/source-receipts`; also protects legacy mutations in strict mode |
 | `RAGNIFICENT_REQUIRE_INTERNAL_AUTH` | Set `true` only after existing API callers send `X-Ragnificent-Token` |
 | `RAGNIFICENT_TRUSTED_SOURCE_ROOTS` | Optional JSON map of logical root IDs to server paths for source receipts |
 | `RAGNIFICENT_VOLTRON_REPOSITORY_DOCS_ROOT` | Docker-container path `/app/voltron-documentation-snapshots` for the read-only Agent Harness documentation snapshot mount |
 | `RAGNIFICENT_CORS_ORIGINS` | Explicit comma-separated browser origin allowlist; wildcard values are ignored |
 | `RAGNIFICENT_ALLOWED_QUERY_MODEL_OVERRIDES` | Explicit model-ID allowlist for HTTP `llm_model` overrides; empty disables overrides |
-| `QDRANT_URL` | Qdrant connection URL |
-| `LIBRARY_ROOT` | Root directory for corpora and data (default `rag_library`) |
+| `STATE_DB_PATH` | Active override for the SQLite state path; use `/app/rag_library/state/ingest.sqlite` in Docker |
+| `QDRANT_URL` | Compatibility placeholder in `.env.example`; the current loader reads `vector_db.url` from the selected config YAML |
+| `LIBRARY_ROOT` | Compatibility placeholder in `.env.example`; the current loader reads `library_root` from the selected config YAML |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 
 ### `config.yaml` — provider and model settings
 
-Managed by the Settings UI. Controls default embedding provider/model and default LLM provider/model for new corpora plus connection testing. Per-corpus overrides live in `rag_library/corpora/<id>/corpus.yaml`.
+Managed by the Settings UI. Controls default embedding provider/model and default LLM provider/model for new corpora plus connection testing. Per-corpus overrides live in `rag_library/corpora/<id>/corpus.yaml`. The current loader takes `library_root` and `vector_db.url` from this YAML (or `config.docker.yaml` in Compose); `STATE_DB_PATH` is the environment override for SQLite.
 
 ### `config.yaml` — OCR settings
 
@@ -645,9 +667,10 @@ Current catalog/provider flow:
 
 ```bash
 python -m compileall app
+python -m pytest
 ```
 
-Current repo validation is primarily live ingest/query verification plus compile checks. If you maintain a local/private test suite, run it separately in your environment.
+The tracked pytest suite covers agenda routes, knowledge trust, local-only policy, query-route policy, and source-receipt security. Compile checks and live ingest/query verification remain separate runtime checks.
 
 ---
 
@@ -678,7 +701,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 Updated: 2026-04-13
 
-This README is part of the Voltron workspace documentation set. The current cross-stack workflow/auth paths are:
+This README is part of the Voltron workspace documentation set. The following are consumer-owned cross-stack references, not configuration owned or verified by this repository; check each path in its owning repository before relying on it:
 
 - Shared auth source: `JazzyTheAI/.env`, variable `AGENTS_AUTH`.
 - AgentsOfJazzy auth loader: `AgentsOfJazzy/packages/common/env_bridge.py`.
